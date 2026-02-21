@@ -1,0 +1,310 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Health Connect Explorer</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+    <style>
+        :root {
+            --bg: #0f1117;
+            --surface: #1a1d27;
+            --surface2: #252836;
+            --border: #2e3140;
+            --text: #e4e6ed;
+            --text2: #9096a8;
+            --accent: #6c8cff;
+            --accent2: #4ecdc4;
+            --green: #4caf50;
+            --orange: #ff9800;
+            --red: #f44336;
+            --purple: #ab47bc;
+            --pink: #ec407a;
+            --yellow: #fdd835;
+        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            line-height: 1.5;
+        }
+        .header {
+            background: var(--surface);
+            border-bottom: 1px solid var(--border);
+            padding: 16px 24px;
+            display: flex;
+            align-items: center;
+            gap: 16px;
+        }
+        .header h1 {
+            font-size: 20px;
+            font-weight: 600;
+            color: var(--accent);
+        }
+        .header .subtitle {
+            color: var(--text2);
+            font-size: 13px;
+        }
+
+        /* Navigation */
+        .nav {
+            background: var(--surface);
+            border-bottom: 1px solid var(--border);
+            padding: 0 24px;
+            display: flex;
+            gap: 0;
+            overflow-x: auto;
+        }
+        .nav button {
+            background: none;
+            border: none;
+            color: var(--text2);
+            padding: 12px 18px;
+            font-size: 14px;
+            cursor: pointer;
+            border-bottom: 2px solid transparent;
+            transition: all 0.2s;
+            white-space: nowrap;
+        }
+        .nav button:hover { color: var(--text); background: var(--surface2); }
+        .nav button.active {
+            color: var(--accent);
+            border-bottom-color: var(--accent);
+        }
+
+        /* Content */
+        .content { padding: 24px; max-width: 1400px; margin: 0 auto; }
+
+        .panel {
+            display: none;
+        }
+        .panel.active { display: block; }
+
+        /* Stat cards */
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+            gap: 16px;
+            margin-bottom: 24px;
+        }
+        .stat-card {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 20px;
+        }
+        .stat-card .label {
+            font-size: 12px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            color: var(--text2);
+            margin-bottom: 8px;
+        }
+        .stat-card .value {
+            font-size: 28px;
+            font-weight: 700;
+        }
+        .stat-card .sub {
+            font-size: 12px;
+            color: var(--text2);
+            margin-top: 4px;
+        }
+
+        /* Chart containers */
+        .chart-row {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 16px;
+            margin-bottom: 16px;
+        }
+        .chart-row.two-col {
+            grid-template-columns: 1fr 1fr;
+        }
+        @media (max-width: 900px) {
+            .chart-row.two-col { grid-template-columns: 1fr; }
+        }
+        .chart-box {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 20px;
+        }
+        .chart-box h3 {
+            font-size: 15px;
+            font-weight: 600;
+            margin-bottom: 16px;
+            color: var(--text);
+        }
+        .chart-wrap {
+            position: relative;
+            height: 320px;
+        }
+        .chart-wrap.tall { height: 400px; }
+        .chart-wrap canvas { width: 100% !important; }
+
+        /* Table */
+        .table-wrap {
+            overflow-x: auto;
+            margin-top: 16px;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 13px;
+        }
+        thead th {
+            background: var(--surface2);
+            color: var(--text2);
+            padding: 10px 12px;
+            text-align: left;
+            font-weight: 600;
+            border-bottom: 1px solid var(--border);
+            white-space: nowrap;
+            position: sticky;
+            top: 0;
+        }
+        tbody td {
+            padding: 8px 12px;
+            border-bottom: 1px solid var(--border);
+            white-space: nowrap;
+        }
+        tbody tr:hover { background: var(--surface2); }
+
+        /* Raw explorer */
+        .explorer-controls {
+            display: flex;
+            gap: 12px;
+            align-items: center;
+            margin-bottom: 16px;
+            flex-wrap: wrap;
+        }
+        .explorer-controls select,
+        .explorer-controls button {
+            background: var(--surface2);
+            border: 1px solid var(--border);
+            color: var(--text);
+            padding: 8px 14px;
+            border-radius: 8px;
+            font-size: 13px;
+            cursor: pointer;
+        }
+        .explorer-controls select:focus,
+        .explorer-controls button:hover {
+            border-color: var(--accent);
+            outline: none;
+        }
+        .explorer-controls .info {
+            color: var(--text2);
+            font-size: 13px;
+        }
+
+        /* Loading */
+        .loading {
+            text-align: center;
+            padding: 60px;
+            color: var(--text2);
+        }
+        .loading::after {
+            content: '';
+            display: block;
+            width: 32px;
+            height: 32px;
+            margin: 16px auto;
+            border: 3px solid var(--border);
+            border-top-color: var(--accent);
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+
+        /* Pill badges */
+        .pill {
+            display: inline-block;
+            padding: 2px 10px;
+            border-radius: 12px;
+            font-size: 11px;
+            font-weight: 600;
+        }
+        .pill.green { background: rgba(76,175,80,0.15); color: var(--green); }
+        .pill.orange { background: rgba(255,152,0,0.15); color: var(--orange); }
+        .pill.purple { background: rgba(171,71,188,0.15); color: var(--purple); }
+        .pill.blue { background: rgba(108,140,255,0.15); color: var(--accent); }
+
+        /* Time range filter */
+        .time-filter {
+            display: flex;
+            gap: 6px;
+            margin-bottom: 16px;
+        }
+        .time-filter button {
+            background: var(--surface2);
+            border: 1px solid var(--border);
+            color: var(--text2);
+            padding: 6px 14px;
+            border-radius: 16px;
+            font-size: 12px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .time-filter button:hover { color: var(--text); border-color: var(--text2); }
+        .time-filter button.active {
+            background: var(--accent);
+            color: #fff;
+            border-color: var(--accent);
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>Health Connect Explorer</h1>
+        <span class="subtitle" id="dbInfo">Loading...</span>
+    </div>
+    <div class="nav" id="nav">
+        <button class="active" data-panel="overview">Overview</button>
+        <button data-panel="weight">Weight</button>
+        <button data-panel="nutrition">Nutrition</button>
+        <button data-panel="steps">Steps</button>
+        <button data-panel="sleep">Sleep</button>
+        <button data-panel="exercise">Exercise</button>
+        <button data-panel="heart">Heart Rate</button>
+        <button data-panel="explorer">Data Explorer</button>
+    </div>
+    <div class="content">
+        <!-- Overview -->
+        <div class="panel active" id="panel-overview">
+            <div class="loading">Loading overview...</div>
+        </div>
+        <!-- Weight -->
+        <div class="panel" id="panel-weight">
+            <div class="loading">Loading weight data...</div>
+        </div>
+        <!-- Nutrition -->
+        <div class="panel" id="panel-nutrition">
+            <div class="loading">Loading nutrition data...</div>
+        </div>
+        <!-- Steps -->
+        <div class="panel" id="panel-steps">
+            <div class="loading">Loading steps data...</div>
+        </div>
+        <!-- Sleep -->
+        <div class="panel" id="panel-sleep">
+            <div class="loading">Loading sleep data...</div>
+        </div>
+        <!-- Exercise -->
+        <div class="panel" id="panel-exercise">
+            <div class="loading">Loading exercise data...</div>
+        </div>
+        <!-- Heart Rate -->
+        <div class="panel" id="panel-heart">
+            <div class="loading">Loading heart rate data...</div>
+        </div>
+        <!-- Raw Explorer -->
+        <div class="panel" id="panel-explorer">
+            <div class="loading">Loading tables...</div>
+        </div>
+    </div>
+    <script src="app.js"></script>
+</body>
+</html>

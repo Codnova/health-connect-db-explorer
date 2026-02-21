@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "hc-explorer",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["server.js"],
+      "port": 3500
+    }
+  ]
+}

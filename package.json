@@ -1,0 +1,14 @@
+{
+  "name": "hc-explorer",
+  "version": "1.0.0",
+  "description": "Health Connect SQLite data explorer and dashboard",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.21.0",
+    "sql.js": "^1.11.0"
+  }
+}
