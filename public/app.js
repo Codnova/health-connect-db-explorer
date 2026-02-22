@@ -260,40 +260,36 @@
 
     // ─── Nutrition ───
     async function loadNutrition() {
-        const { daily, meals } = await api('/api/nutrition');
+        const [nutRes, bmrRes] = await Promise.all([
+            api('/api/nutrition'),
+            api('/api/bmr').catch(() => ([]))
+        ]);
+        const daily = nutRes.daily;
+        const meals = nutRes.meals;
+        const bmrMap = new Map(bmrRes.map(d => [d.date, d.bmr]));
+
+        let activityFactor = parseFloat(localStorage.getItem('hc_activity_factor')) || 1.2;
+
         const panel = document.getElementById('panel-nutrition');
         if (!daily.length) { panel.innerHTML = '<div class="stat-card"><div class="label">No nutrition data</div></div>'; return; }
 
-        // Averages (last 30 days)
-        const last30 = filterByDays(daily, 30);
-        const avg = (arr, key) => arr.length ? Math.round(arr.reduce((s, d) => s + d[key], 0) / arr.length) : 0;
-
         panel.innerHTML = `
-            <div class="stats-grid">
-                <div class="stat-card">
-                    <div class="label">Avg Daily Calories (30d)</div>
-                    <div class="value">${avg(last30, 'kcal').toLocaleString()}</div>
-                    <div class="sub">kcal/day</div>
-                </div>
-                <div class="stat-card">
-                    <div class="label">Avg Protein (30d)</div>
-                    <div class="value" style="color:var(--accent2)">${avg(last30, 'protein')}g</div>
-                    <div class="sub">per day</div>
-                </div>
-                <div class="stat-card">
-                    <div class="label">Avg Carbs (30d)</div>
-                    <div class="value" style="color:var(--orange)">${avg(last30, 'carbs')}g</div>
-                    <div class="sub">per day</div>
-                </div>
-                <div class="stat-card">
-                    <div class="label">Avg Fat (30d)</div>
-                    <div class="value" style="color:var(--pink)">${avg(last30, 'fat')}g</div>
-                    <div class="sub">per day</div>
-                </div>
+            <div id="nutrition-stats" class="stats-grid"></div>
+            <div class="explorer-controls" style="margin-bottom:16px;text-align:right">
+                <label style="font-size:14px;color:var(--text2)">Activity Factor (TDEE): 
+                    <select id="activity-factor" style="margin-left:8px;padding:4px;background:var(--bg2);color:var(--text);border:1px solid var(--border);border-radius:4px">
+                        <option value="1.0">1.0 (BMR Only)</option>
+                        <option value="1.2">1.2 (Sedentary)</option>
+                        <option value="1.375">1.375 (Lightly Active)</option>
+                        <option value="1.55">1.55 (Moderately Active)</option>
+                        <option value="1.725">1.725 (Very Active)</option>
+                        <option value="1.9">1.9 (Extremely Active)</option>
+                    </select>
+                </label>
             </div>
             <div class="chart-row">
                 <div class="chart-box">
-                    <h3>Daily Calories</h3>
+                    <h3>Energy Balance (Calories In vs Out)</h3>
                     <div class="chart-wrap tall"><canvas id="chart-calories"></canvas></div>
                 </div>
             </div>
@@ -303,7 +299,7 @@
                     <div class="chart-wrap tall"><canvas id="chart-macros"></canvas></div>
                 </div>
                 <div class="chart-box">
-                    <h3>Macro Split (Last 30 Days)</h3>
+                    <h3>Macro Split</h3>
                     <div class="chart-wrap"><canvas id="chart-macro-pie"></canvas></div>
                 </div>
             </div>
@@ -318,10 +314,22 @@
             </div>
         `;
 
-        const defaultDays = addTimeFilter(panel, (days) => {
-            renderNutritionCharts(daily, days);
+        document.getElementById('activity-factor').value = activityFactor;
+        document.getElementById('activity-factor').addEventListener('change', (e) => {
+            activityFactor = parseFloat(e.target.value);
+            localStorage.setItem('hc_activity_factor', activityFactor);
+            const activeFilter = document.querySelector('#panel-nutrition .time-filters .active');
+            const days = parseInt(activeFilter ? activeFilter.dataset.days : 30) || 0;
+            renderNutritionStats(daily, days, bmrMap, activityFactor);
+            renderNutritionCharts(daily, days, bmrMap, activityFactor);
         });
-        renderNutritionCharts(daily, defaultDays);
+
+        const defaultDays = addTimeFilter(panel, (days) => {
+            renderNutritionStats(daily, days, bmrMap, activityFactor);
+            renderNutritionCharts(daily, days, bmrMap, activityFactor);
+        });
+        renderNutritionStats(daily, defaultDays, bmrMap, activityFactor);
+        renderNutritionCharts(daily, defaultDays, bmrMap, activityFactor);
 
         // Meals table (last 100)
         const tbody = document.getElementById('meals-table');
@@ -339,30 +347,106 @@
         `).join('');
     }
 
-    function renderNutritionCharts(allDaily, days) {
+    function renderNutritionStats(allDaily, days, bmrMap, af) {
+        const daily = filterByDays(allDaily, days);
+        const avg = (arr, key) => arr.length ? Math.round(arr.reduce((s, d) => s + d[key], 0) / arr.length) : 0;
+
+        let validDays = 0;
+        let totalBalance = 0;
+        let totalTdee = 0;
+
+        daily.forEach(d => {
+            if (bmrMap.has(d.date)) {
+                validDays++;
+                const tdee = Math.round(bmrMap.get(d.date) * af);
+                totalTdee += tdee;
+                totalBalance += (d.kcal - tdee);
+            }
+        });
+
+        const avgTdee = validDays ? Math.round(totalTdee / validDays) : 0;
+        const avgBalance = validDays ? Math.round(totalBalance / validDays) : 0;
+        const avgKcal = avg(daily, 'kcal');
+
+        const labelSuffix = days ? `(${days}d)` : '(All Time)';
+
+        document.getElementById('nutrition-stats').innerHTML = `
+            <div class="stat-card">
+                <div class="label">Avg Calories In ${labelSuffix}</div>
+                <div class="value">${avgKcal.toLocaleString()}</div>
+                <div class="sub">kcal/day</div>
+            </div>
+            <div class="stat-card">
+                <div class="label">Avg TDEE ${labelSuffix}</div>
+                <div class="value" style="color:var(--yellow)">${avgTdee.toLocaleString()}</div>
+                <div class="sub">Activity Factor ${af}</div>
+            </div>
+            <div class="stat-card">
+                <div class="label">Net Balance ${labelSuffix}</div>
+                <div class="value" style="color:${avgBalance > 0 ? 'var(--orange)' : 'var(--green)'}">${avgBalance > 0 ? '+' : ''}${avgBalance.toLocaleString()}</div>
+                <div class="sub">kcal/day</div>
+            </div>
+            <div class="stat-card">
+                <div class="label">Avg Protein</div>
+                <div class="value" style="color:var(--accent2)">${avg(daily, 'protein')}g</div>
+            </div>
+            <div class="stat-card">
+                <div class="label">Avg Carbs</div>
+                <div class="value" style="color:var(--orange)">${avg(daily, 'carbs')}g</div>
+            </div>
+            <div class="stat-card">
+                <div class="label">Avg Fat</div>
+                <div class="value" style="color:var(--pink)">${avg(daily, 'fat')}g</div>
+            </div>
+        `;
+    }
+
+    function renderNutritionCharts(allDaily, days, bmrMap, af) {
         const daily = filterByDays(allDaily, days);
 
-        // Calories chart
+        // Calories chart (Grouped + Balance)
         destroyChart('calories');
         charts['calories'] = new Chart(document.getElementById('chart-calories'), {
             type: 'bar',
             data: {
                 labels: daily.map(d => d.date),
-                datasets: [{
-                    label: 'Calories (kcal)',
-                    data: daily.map(d => d.kcal),
-                    backgroundColor: COLORS.accent + '80',
-                    borderColor: COLORS.accent,
-                    borderWidth: 1,
-                    borderRadius: 3,
-                }]
+                datasets: [
+                    {
+                        label: 'Calories In',
+                        data: daily.map(d => d.kcal),
+                        backgroundColor: COLORS.accent + '90',
+                        borderColor: COLORS.accent,
+                        borderWidth: 1,
+                        borderRadius: 2,
+                    },
+                    {
+                        label: 'Calories Out (TDEE)',
+                        data: daily.map(d => bmrMap.has(d.date) ? Math.round(bmrMap.get(d.date) * af) : 0),
+                        backgroundColor: COLORS.yellow + '90',
+                        borderColor: COLORS.yellow,
+                        borderWidth: 1,
+                        borderRadius: 2,
+                    },
+                    {
+                        label: 'Balance',
+                        type: 'line',
+                        data: daily.map(d => bmrMap.has(d.date) ? d.kcal - Math.round(bmrMap.get(d.date) * af) : 0),
+                        borderColor: COLORS.red,
+                        backgroundColor: COLORS.red,
+                        borderWidth: 2,
+                        tension: 0.3,
+                        pointRadius: 2,
+                        yAxisID: 'yBalance'
+                    }
+                ]
             },
             options: {
                 responsive: true,
                 maintainAspectRatio: false,
                 scales: {
                     x: { type: 'time', time: { unit: days && days <= 90 ? 'day' : 'week' } },
-                    y: { title: { display: true, text: 'kcal' }, beginAtZero: true }
+                    y: { title: { display: true, text: 'kcal' }, beginAtZero: true, position: 'left' },
+                    yBalance: { title: { display: true, text: 'Balance (kcal)' }, position: 'right', grid: { drawOnChartArea: false } }
                 }
             }
         });
@@ -415,7 +499,7 @@
                             label: ctx => {
                                 const total = ctx.dataset.data.reduce((a, b) => a + b, 0);
                                 const pct = total > 0 ? Math.round(ctx.parsed / total * 100) : 0;
-                                return `${ctx.label}: ${ctx.parsed.toLocaleString()}g (${pct}%)`;
+                                return `${ctx.label}: ${ctx.parsed.toLocaleString()} g(${pct} %)`;
                             }
                         }
                     }
@@ -431,35 +515,47 @@
         if (!data.length) { panel.innerHTML = '<div class="stat-card"><div class="label">No steps data</div></div>'; return; }
 
         const last30 = filterByDays(data, 30);
-        const avg30 = last30.length ? Math.round(last30.reduce((s, d) => s + d.totalSteps, 0) / last30.length) : 0;
-        const maxDay = data.reduce((best, d) => d.totalSteps > best.totalSteps ? d : best, data[0]);
-        const totalAll = data.reduce((s, d) => s + d.totalSteps, 0);
-
+        // Stats now handled by renderStepsStats
         panel.innerHTML = `
-            <div class="stats-grid">
-                <div class="stat-card">
-                    <div class="label">Avg Daily Steps (30d)</div>
-                    <div class="value">${avg30.toLocaleString()}</div>
-                </div>
-                <div class="stat-card">
-                    <div class="label">Best Day</div>
-                    <div class="value" style="color:var(--green)">${maxDay.totalSteps.toLocaleString()}</div>
-                    <div class="sub">${maxDay.date}</div>
-                </div>
-                <div class="stat-card">
-                    <div class="label">Total Steps</div>
-                    <div class="value">${totalAll.toLocaleString()}</div>
-                    <div class="sub">${data.length} days tracked</div>
-                </div>
-            </div>
+            <div id="steps-stats" class="stats-grid"></div>
             <div class="chart-box">
                 <h3>Daily Steps</h3>
                 <div class="chart-wrap tall"><canvas id="chart-steps"></canvas></div>
             </div>
         `;
 
-        const defaultDays = addTimeFilter(panel, (days) => renderStepsChart(data, days));
+        const defaultDays = addTimeFilter(panel, (days) => {
+            renderStepsStats(data, days);
+            renderStepsChart(data, days);
+        });
+        renderStepsStats(data, defaultDays);
         renderStepsChart(data, defaultDays);
+    }
+
+    function renderStepsStats(allData, days) {
+        const data = filterByDays(allData, days);
+        const avg = data.length ? Math.round(data.reduce((s, d) => s + d.totalSteps, 0) / data.length) : 0;
+        const maxDay = data.length ? data.reduce((best, d) => d.totalSteps > best.totalSteps ? d : best, data[0]) : { totalSteps: 0, date: '—' };
+        const totalAll = data.reduce((s, d) => s + d.totalSteps, 0);
+
+        const labelSuffix = days ? `(${days}d)` : '(All Time)';
+
+        document.getElementById('steps-stats').innerHTML = `
+            <div class="stat-card">
+                <div class="label">Avg Daily Steps ${labelSuffix}</div>
+                <div class="value">${avg.toLocaleString()}</div>
+            </div>
+            <div class="stat-card">
+                <div class="label">Best Day ${labelSuffix}</div>
+                <div class="value" style="color:var(--green)">${maxDay.totalSteps.toLocaleString()}</div>
+                <div class="sub">${maxDay.date}</div>
+            </div>
+            <div class="stat-card">
+                <div class="label">Total Steps ${labelSuffix}</div>
+                <div class="value">${totalAll.toLocaleString()}</div>
+                <div class="sub">${data.length} days tracked</div>
+            </div>
+        `;
     }
 
     function renderStepsChart(allData, days) {
@@ -503,31 +599,9 @@
         if (!data.length) { panel.innerHTML = '<div class="stat-card"><div class="label">No sleep data</div></div>'; return; }
 
         const last30 = filterByDays(data, 30);
-        const avgDuration = last30.length ? (last30.reduce((s, d) => s + d.durationHrs, 0) / last30.length).toFixed(1) : '—';
-        const avgDeep = last30.length ? Math.round(last30.reduce((s, d) => s + d.deepMin, 0) / last30.length) : 0;
-        const avgRem = last30.length ? Math.round(last30.reduce((s, d) => s + d.remMin, 0) / last30.length) : 0;
-        const sleepDebt30d = last30.reduce((s, d) => s + (8 - d.durationHrs), 0).toFixed(1);
-
+        // Stats now handled by renderSleepStats
         panel.innerHTML = `
-            <div class="stats-grid">
-                <div class="stat-card">
-                    <div class="label">Avg Sleep Duration (30d)</div>
-                    <div class="value">${avgDuration} hrs</div>
-                </div>
-                <div class="stat-card">
-                    <div class="label">Sleep Debt (30d)</div>
-                    <div class="value" style="color:${sleepDebt30d > 0 ? 'var(--red)' : 'var(--green)'}">${sleepDebt30d > 0 ? '+' : ''}${sleepDebt30d} hrs</div>
-                    <div class="sub">Compared to 8hr/night baseline</div>
-                </div>
-                <div class="stat-card">
-                    <div class="label">Avg Deep Sleep (30d)</div>
-                    <div class="value" style="color:var(--purple)">${avgDeep} min</div>
-                </div>
-                <div class="stat-card">
-                    <div class="label">Avg REM Sleep (30d)</div>
-                    <div class="value" style="color:var(--accent)">${avgRem} min</div>
-                </div>
-            </div>
+            <div id="sleep-stats" class="stats-grid"></div>
             <div class="chart-box" style="margin-bottom:16px">
                 <h3>Sleep Duration</h3>
                 <div class="chart-wrap tall"><canvas id="chart-sleep-duration"></canvas></div>
@@ -548,8 +622,42 @@
             </div>
         `;
 
-        const defaultDays = addTimeFilter(panel, (days) => renderSleepCharts(data, days));
+        const defaultDays = addTimeFilter(panel, (days) => {
+            renderSleepStats(data, days);
+            renderSleepCharts(data, days);
+        });
+        renderSleepStats(data, defaultDays);
         renderSleepCharts(data, defaultDays);
+    }
+
+    function renderSleepStats(allData, days) {
+        const data = filterByDays(allData, days);
+        const avgDuration = data.length ? (data.reduce((s, d) => s + d.durationHrs, 0) / data.length).toFixed(1) : '—';
+        const avgDeep = data.length ? Math.round(data.reduce((s, d) => s + d.deepMin, 0) / data.length) : 0;
+        const avgRem = data.length ? Math.round(data.reduce((s, d) => s + d.remMin, 0) / data.length) : 0;
+        const sleepDebt = data.reduce((s, d) => s + (8 - d.durationHrs), 0).toFixed(1);
+
+        const labelSuffix = days ? `(${days}d)` : '(All Time)';
+
+        document.getElementById('sleep-stats').innerHTML = `
+            <div class="stat-card">
+                <div class="label">Avg Sleep Duration ${labelSuffix}</div>
+                <div class="value">${avgDuration} hrs</div>
+            </div>
+            <div class="stat-card">
+                <div class="label">Sleep Debt ${labelSuffix}</div>
+                <div class="value" style="color:${sleepDebt > 0 ? 'var(--red)' : 'var(--green)'}">${sleepDebt > 0 ? '+' : ''}${sleepDebt} hrs</div>
+                <div class="sub">Compared to 8hr/night baseline</div>
+            </div>
+            <div class="stat-card">
+                <div class="label">Avg Deep Sleep ${labelSuffix}</div>
+                <div class="value" style="color:var(--purple)">${avgDeep} min</div>
+            </div>
+            <div class="stat-card">
+                <div class="label">Avg REM Sleep ${labelSuffix}</div>
+                <div class="value" style="color:var(--accent)">${avgRem} min</div>
+            </div>
+        `;
     }
 
     function renderSleepCharts(allData, days) {
@@ -583,28 +691,85 @@
             }
         });
 
-        // Stages stacked bar
+        // Stages Architecture (Chronological Floating Bar)
+        // Show only the most recent 14 days maximum to keep it legible
+        const recentData = data.slice(-14);
+
+        const deepData = [];
+        const remData = [];
+        const lightData = [];
+        const awakeData = [];
+
+        // Helper to normalize time to a single generic 24hr overlay day
+        // so all nights align horizontally from PM to AM
+        const normalizeTime = (timeStr) => {
+            const d = new Date(timeStr);
+            const hours = d.getHours();
+            // Assign to Jan 1 if PM, Jan 2 if AM 
+            const offsetDay = hours < 12 ? 2 : 1;
+            return new Date(2000, 0, offsetDay, hours, d.getMinutes(), d.getSeconds()).getTime();
+        };
+
+        recentData.forEach(d => {
+            if (d.stages && d.stages.length) {
+                d.stages.forEach(s => {
+                    const normStart = normalizeTime(s.startTime);
+                    const normEnd = normalizeTime(s.endTime);
+                    // Ensure end is strictly after start, else it might loop across the day divide strangely
+                    let finalEnd = normEnd < normStart ? normEnd + 86400000 : normEnd;
+
+                    const entry = { x: [normStart, finalEnd], y: d.date, rawStart: s.startTime, rawEnd: s.endTime };
+
+                    if (s.stageType === 5) deepData.push(entry);
+                    else if (s.stageType === 6) remData.push(entry);
+                    else if (s.stageType === 4 || s.stageType === 2) lightData.push(entry);
+                    else if (s.stageType === 1 || s.stageType === 3) awakeData.push(entry);
+                });
+            }
+        });
+
         destroyChart('sleepStages');
         charts['sleepStages'] = new Chart(document.getElementById('chart-sleep-stages'), {
             type: 'bar',
             data: {
-                labels: data.map(d => d.date),
                 datasets: [
-                    { label: 'Deep', data: data.map(d => d.deepMin), backgroundColor: COLORS.purple + 'bb' },
-                    { label: 'REM', data: data.map(d => d.remMin), backgroundColor: COLORS.accent + 'bb' },
-                    { label: 'Light', data: data.map(d => d.lightMin), backgroundColor: COLORS.lightBlue + '70' },
-                    { label: 'Awake', data: data.map(d => d.awakeMin), backgroundColor: COLORS.orange + '50' },
+                    { label: 'Deep', data: deepData, backgroundColor: COLORS.purple, borderRadius: 2 },
+                    { label: 'REM', data: remData, backgroundColor: COLORS.accent, borderRadius: 2 },
+                    { label: 'Light/Core', data: lightData, backgroundColor: COLORS.lightBlue + 'aa', borderRadius: 2 },
+                    { label: 'Awake', data: awakeData, backgroundColor: COLORS.orange, borderRadius: 2 },
                 ]
             },
             options: {
+                indexAxis: 'y',
                 responsive: true,
                 maintainAspectRatio: false,
                 scales: {
-                    x: { type: 'time', time: { unit: days && days <= 90 ? 'day' : 'week' }, stacked: true },
-                    y: { title: { display: true, text: 'Minutes' }, stacked: true, beginAtZero: true }
+                    x: {
+                        type: 'time',
+                        time: { unit: 'hour', tooltipFormat: 'HH:mm' },
+                        title: { display: true, text: 'Time of Night' },
+                        min: new Date(2000, 0, 1, 19, 0, 0).getTime(), // Start relative view at 7 PM
+                        max: new Date(2000, 0, 2, 11, 0, 0).getTime(), // End at 11 AM
+                    },
+                    y: {
+                        type: 'category',
+                        labels: recentData.map(d => d.date)
+                    }
+                },
+                plugins: {
+                    tooltip: {
+                        callbacks: {
+                            label: ctx => {
+                                const startStr = new Date(ctx.raw.rawStart).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                                const endStr = new Date(ctx.raw.rawEnd).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                                return `${ctx.dataset.label}: ${startStr} - ${endStr}`;
+                            }
+                        }
+                    }
                 }
             }
         });
+
 
         // Bedtime consistency
         destroyChart('sleepBedtime');
@@ -637,7 +802,7 @@
                             callback: val => {
                                 const h = Math.floor(val) % 24;
                                 const m = Math.round((val - Math.floor(val)) * 60).toString().padStart(2, '0');
-                                return `${h}:${m}`;
+                                return `${h}:${m} `;
                             }
                         }
                     }
@@ -691,32 +856,9 @@
         });
         const sortedTypes = Object.entries(typeCounts).sort((a, b) => b[1] - a[1]);
 
-        const totalMin = data.reduce((s, d) => s + d.durationMin, 0);
-        const last30 = filterByDays(data, 30);
-        const last30Min = last30.reduce((s, d) => s + d.durationMin, 0);
-
+        // Stats now handled by renderExerciseStats
         panel.innerHTML = `
-            <div class="stats-grid">
-                <div class="stat-card">
-                    <div class="label">Total Sessions</div>
-                    <div class="value">${data.length}</div>
-                </div>
-                <div class="stat-card">
-                    <div class="label">Total Exercise Time</div>
-                    <div class="value">${Math.round(totalMin / 60)} hrs</div>
-                    <div class="sub">${totalMin.toLocaleString()} minutes</div>
-                </div>
-                <div class="stat-card">
-                    <div class="label">Last 30 Days</div>
-                    <div class="value">${last30.length} sessions</div>
-                    <div class="sub">${Math.round(last30Min / 60)} hours</div>
-                </div>
-                <div class="stat-card">
-                    <div class="label">Most Common</div>
-                    <div class="value" style="font-size:20px">${sortedTypes[0]?.[0] || '—'}</div>
-                    <div class="sub">${sortedTypes[0]?.[1] || 0} sessions</div>
-                </div>
-            </div>
+            <div id="exercise-stats" class="stats-grid"></div>
             <div class="chart-row two-col">
                 <div class="chart-box">
                     <h3>Sessions by Type</h3>
@@ -738,8 +880,57 @@
             </div>
         `;
 
-        // Types donut
         const typeColors = [COLORS.accent, COLORS.accent2, COLORS.green, COLORS.orange, COLORS.purple, COLORS.pink, COLORS.yellow, COLORS.red, COLORS.lightBlue];
+
+        // This chart-rendering code will be triggered by addTimeFilter
+        const defaultDays = addTimeFilter(panel, (days) => {
+            renderExerciseStats(data, days);
+            renderExerciseCharts(data, days, typeColors);
+        });
+        renderExerciseStats(data, defaultDays);
+        renderExerciseCharts(data, defaultDays, typeColors);
+    }
+
+    function renderExerciseStats(allData, days) {
+        const data = filterByDays(allData, days);
+
+        const typeCounts = {};
+        data.forEach(d => {
+            typeCounts[d.exerciseType] = (typeCounts[d.exerciseType] || 0) + 1;
+        });
+        const sortedTypes = Object.entries(typeCounts).sort((a, b) => b[1] - a[1]);
+
+        const totalMin = data.reduce((s, d) => s + d.durationMin, 0);
+
+        const labelSuffix = days ? `(${days}d)` : '(All Time)';
+
+        document.getElementById('exercise-stats').innerHTML = `
+            <div class="stat-card">
+                <div class="label">Total Sessions ${labelSuffix}</div>
+                <div class="value">${data.length}</div>
+            </div>
+            <div class="stat-card">
+                <div class="label">Exercise Time ${labelSuffix}</div>
+                <div class="value">${Math.round(totalMin / 60)} hrs</div>
+                <div class="sub">${totalMin.toLocaleString()} minutes</div>
+            </div>
+            <div class="stat-card">
+                <div class="label">Most Common ${labelSuffix}</div>
+                <div class="value" style="font-size:20px">${sortedTypes[0]?.[0] || '—'}</div>
+                <div class="sub">${sortedTypes[0]?.[1] || 0} sessions</div>
+            </div>
+        `;
+    }
+
+    function renderExerciseCharts(allData, days, typeColors) {
+        const data = filterByDays(allData, days);
+
+        // Count by type using the filtered data
+        const typeCounts = {};
+        data.forEach(d => {
+            typeCounts[d.exerciseType] = (typeCounts[d.exerciseType] || 0) + 1;
+        });
+        const sortedTypes = Object.entries(typeCounts).sort((a, b) => b[1] - a[1]);
         charts['exerciseTypes'] = new Chart(document.getElementById('chart-exercise-types'), {
             type: 'doughnut',
             data: {
@@ -810,34 +1001,46 @@
         const panel = document.getElementById('panel-heart');
         if (!data.length) { panel.innerHTML = '<div class="stat-card"><div class="label">No heart rate data</div></div>'; return; }
 
-        const last30 = filterByDays(data, 30);
-        const avgResting = last30.length ? Math.round(last30.reduce((s, d) => s + d.minBpm, 0) / last30.length) : '—';
-        const avgHr = last30.length ? Math.round(last30.reduce((s, d) => s + d.avgBpm, 0) / last30.length) : '—';
-
+        // Stats now handled by renderHRStats
         panel.innerHTML = `
-            <div class="stats-grid">
-                <div class="stat-card">
-                    <div class="label">Avg Resting HR (30d)</div>
-                    <div class="value" style="color:var(--red)">${avgResting} bpm</div>
-                </div>
-                <div class="stat-card">
-                    <div class="label">Avg Heart Rate (30d)</div>
-                    <div class="value">${avgHr} bpm</div>
-                </div>
-                <div class="stat-card">
-                    <div class="label">Days Tracked</div>
-                    <div class="value">${data.length}</div>
-                    <div class="sub">${data.reduce((s, d) => s + d.dataPoints, 0).toLocaleString()} data points</div>
-                </div>
-            </div>
+            <div id="hr-stats" class="stats-grid"></div>
             <div class="chart-box">
                 <h3>Heart Rate — Daily Min / Avg / Max</h3>
                 <div class="chart-wrap tall"><canvas id="chart-hr"></canvas></div>
             </div>
         `;
 
-        const defaultDays = addTimeFilter(panel, (days) => renderHRChart(data, days));
+        const defaultDays = addTimeFilter(panel, (days) => {
+            renderHRStats(data, days);
+            renderHRChart(data, days);
+        });
+        renderHRStats(data, defaultDays);
         renderHRChart(data, defaultDays);
+    }
+
+    function renderHRStats(allData, days) {
+        const data = filterByDays(allData, days);
+        const avgResting = data.length ? Math.round(data.reduce((s, d) => s + d.minBpm, 0) / data.length) : '—';
+        const avgHr = data.length ? Math.round(data.reduce((s, d) => s + d.avgBpm, 0) / data.length) : '—';
+        const totalPoints = data.reduce((s, d) => s + d.dataPoints, 0);
+
+        const labelSuffix = days ? `(${days}d)` : '(All Time)';
+
+        document.getElementById('hr-stats').innerHTML = `
+            <div class="stat-card">
+                <div class="label">Avg Resting HR ${labelSuffix}</div>
+                <div class="value" style="color:var(--red)">${avgResting} bpm</div>
+            </div>
+            <div class="stat-card">
+                <div class="label">Avg Heart Rate ${labelSuffix}</div>
+                <div class="value">${avgHr} bpm</div>
+            </div>
+            <div class="stat-card">
+                <div class="label">Days Tracked ${labelSuffix}</div>
+                <div class="value">${data.length}</div>
+                <div class="sub">${totalPoints.toLocaleString()} data points</div>
+            </div>
+        `;
     }
 
     function renderHRChart(allData, days) {
@@ -898,6 +1101,7 @@
         const avgDia = last30.length ? Math.round(last30.reduce((s, d) => s + d.diastolic, 0) / last30.length) : '—';
         const latest = data[data.length - 1];
 
+        // Stats now handled by renderBPStats
         panel.innerHTML = `
             <div class="stats-grid">
                 <div class="stat-card">
@@ -1037,7 +1241,7 @@
             const val2 = overlap.map(d => map2.get(d));
 
             const p = pearson(val1, val2);
-            document.getElementById('corr-stat').textContent = `Pearson: ${p.toFixed(2)}`;
+            document.getElementById('corr-stat').textContent = `Pearson: ${p.toFixed(2)} `;
 
             destroyChart('corrLine');
             charts['corrLine'] = new Chart(document.getElementById('chart-corr'), {
@@ -1079,7 +1283,7 @@
                     plugins: {
                         tooltip: {
                             callbacks: {
-                                label: ctx => `${ctx.raw.date}: ${ctx.parsed.x}, ${ctx.parsed.y}`
+                                label: ctx => `${ctx.raw.date}: ${ctx.parsed.x}, ${ctx.parsed.y} `
                             }
                         }
                     }
@@ -1154,8 +1358,8 @@
                             <div class="value" style="color:var(--orange)">${calHit} / 30</div>
                             <div class="sub">Days Under Target in Last Month</div>
                         </div>
-                    </div>
-                `;
+            </div>
+            `;
             } catch (err) {
                 content.innerHTML = `<div class="stat-card"><div class="label">Error</div><div class="sub">${err.message}</div></div>`;
             }

@@ -367,6 +367,7 @@ async function main() {
                     remMin,
                     awakeMin,
                     stageCount: stages.length,
+                    stages: stages,
                 };
             });
 
@@ -488,6 +489,35 @@ async function main() {
             res.json(data);
         } catch (err) {
             console.error('[spo2]', err);
+            res.status(500).json({ error: err.message });
+        }
+    });
+
+    // Basal Metabolic Rate
+    app.get('/api/bmr', (req, res) => {
+        try {
+            if (!db) return res.status(400).json({ error: 'Database not loaded' });
+            const rows = db.exec(`
+                SELECT time, zone_offset, basal_metabolic_rate
+                FROM basal_metabolic_rate_record_table
+                ORDER BY time ASC
+            `);
+            if (!rows[0]) return res.json([]);
+
+            const dailyMap = new Map();
+            const wattsToKcalDay = 86400 / 4184; // Conversion from Watts to kcal/day
+
+            for (const r of rows[0].values) {
+                const date = msToLocalDate(r[0], r[1]);
+                if (!date) continue;
+                // Get the latest BMR for that day, convert to kcal
+                dailyMap.set(date, Math.round(r[2] * wattsToKcalDay));
+            }
+
+            const data = [...dailyMap.entries()].map(([date, bmr]) => ({ date, bmr }));
+            res.json(data);
+        } catch (err) {
+            console.error('[bmr]', err);
             res.status(500).json({ error: err.message });
         }
     });

@@ -1,0 +1,332 @@
+{
+  "bmr": [
+    [
+      0,
+      "row_id",
+      "INTEGER",
+      0,
+      null,
+      1
+    ],
+    [
+      1,
+      "uuid",
+      "BLOB",
+      1,
+      null,
+      0
+    ],
+    [
+      2,
+      "last_modified_time",
+      "INTEGER",
+      0,
+      null,
+      0
+    ],
+    [
+      3,
+      "client_record_id",
+      "TEXT",
+      0,
+      null,
+      0
+    ],
+    [
+      4,
+      "client_record_version",
+      "TEXT",
+      0,
+      null,
+      0
+    ],
+    [
+      5,
+      "device_info_id",
+      "INTEGER",
+      0,
+      null,
+      0
+    ],
+    [
+      6,
+      "app_info_id",
+      "INTEGER",
+      0,
+      null,
+      0
+    ],
+    [
+      7,
+      "recording_method",
+      "INTEGER",
+      0,
+      null,
+      0
+    ],
+    [
+      8,
+      "dedupe_hash",
+      "BLOB",
+      0,
+      null,
+      0
+    ],
+    [
+      9,
+      "time",
+      "INTEGER",
+      0,
+      null,
+      0
+    ],
+    [
+      10,
+      "zone_offset",
+      "INTEGER",
+      0,
+      null,
+      0
+    ],
+    [
+      11,
+      "local_date",
+      "INTEGER",
+      0,
+      null,
+      0
+    ],
+    [
+      12,
+      "basal_metabolic_rate",
+      "REAL",
+      0,
+      null,
+      0
+    ]
+  ],
+  "bmrSample": [
+    [
+      1,
+      {
+        "0": 80,
+        "1": 110,
+        "2": 242,
+        "3": 177,
+        "4": 109,
+        "5": 109,
+        "6": 76,
+        "7": 72,
+        "8": 191,
+        "9": 18,
+        "10": 182,
+        "11": 126,
+        "12": 192,
+        "13": 231,
+        "14": 172,
+        "15": 70
+      },
+      1724491928151,
+      null,
+      "0",
+      1,
+      1,
+      0,
+      {
+        "0": 0,
+        "1": 0,
+        "2": 0,
+        "3": 0,
+        "4": 0,
+        "5": 0,
+        "6": 0,
+        "7": 1,
+        "8": 0,
+        "9": 0,
+        "10": 0,
+        "11": 0,
+        "12": 0,
+        "13": 0,
+        "14": 0,
+        "15": 1,
+        "16": 0,
+        "17": 0,
+        "18": 1,
+        "19": 145,
+        "20": 131,
+        "21": 185,
+        "22": 135,
+        "23": 92
+      },
+      1724491859804,
+      3600,
+      19959,
+      94.6726851345,
+      1724495459804
+    ]
+  ],
+  "sleepStage": [
+    [
+      0,
+      "parent_key",
+      "INTEGER",
+      1,
+      null,
+      0
+    ],
+    [
+      1,
+      "stage_start_time",
+      "INTEGER",
+      1,
+      null,
+      0
+    ],
+    [
+      2,
+      "stage_end_time",
+      "INTEGER",
+      1,
+      null,
+      0
+    ],
+    [
+      3,
+      "stage_type",
+      "INTEGER",
+      1,
+      null,
+      0
+    ]
+  ],
+  "sleepStageSample": [
+    [
+      1,
+      1724121180000,
+      1724122440000,
+      4
+    ]
+  ],
+  "activeCalories": [
+    [
+      0,
+      "row_id",
+      "INTEGER",
+      0,
+      null,
+      1
+    ],
+    [
+      1,
+      "uuid",
+      "BLOB",
+      1,
+      null,
+      0
+    ],
+    [
+      2,
+      "last_modified_time",
+      "INTEGER",
+      0,
+      null,
+      0
+    ],
+    [
+      3,
+      "client_record_id",
+      "TEXT",
+      0,
+      null,
+      0
+    ],
+    [
+      4,
+      "client_record_version",
+      "TEXT",
+      0,
+      null,
+      0
+    ],
+    [
+      5,
+      "device_info_id",
+      "INTEGER",
+      0,
+      null,
+      0
+    ],
+    [
+      6,
+      "app_info_id",
+      "INTEGER",
+      0,
+      null,
+      0
+    ],
+    [
+      7,
+      "recording_method",
+      "INTEGER",
+      0,
+      null,
+      0
+    ],
+    [
+      8,
+      "dedupe_hash",
+      "BLOB",
+      0,
+      null,
+      0
+    ],
+    [
+      9,
+      "start_time",
+      "INTEGER",
+      0,
+      null,
+      0
+    ],
+    [
+      10,
+      "start_zone_offset",
+      "INTEGER",
+      0,
+      null,
+      0
+    ],
+    [
+      11,
+      "end_time",
+      "INTEGER",
+      0,
+      null,
+      0
+    ],
+    [
+      12,
+      "end_zone_offset",
+      "INTEGER",
+      0,
+      null,
+      0
+    ],
+    [
+      13,
+      "local_date",
+      "INTEGER",
+      0,
+      null,
+      0
+    ],
+    [
+      14,
+      "energy",
+      "REAL",
+      0,
+      null,
+      0
+    ]
+  ]
+}

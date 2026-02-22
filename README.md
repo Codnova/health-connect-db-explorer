@@ -6,14 +6,14 @@ A local web dashboard for visualizing and exploring data exported from [Google H
 
 - **Overview** — summary cards with record counts, date ranges, and connected apps
 - **Weight** — trend line with total change and min/max range
-- **Nutrition** — daily calories bar chart, macronutrient breakdown (protein/carbs/fat), macro split donut, and a searchable meals table
+- **Nutrition** — Energy Balance Gantt chart (Calories In vs. TDEE Out) with adjustable Activity Factor, macronutrient breakdown (protein/carbs/fat), macro split donut, and a searchable meals table
 - **Steps** — daily bar chart color-coded by activity level (green 10k+, orange 5k+, red below)
-- **Sleep** — duration bars, stacked sleep-stage breakdown (deep, REM, light, awake), and average stats
+- **Sleep** — duration bars, chronological floating bar chart for sleep-stage architecture (deep, REM, light, awake), and average stats
 - **Exercise** — sessions-by-type donut, weekly exercise minutes, and session history table
 - **Heart Rate** — daily min/avg/max band chart from Samsung Health series data
 - **Data Explorer** — raw table browser with pagination for all 71 tables in the database
 
-Every chart panel includes a time-range filter (30 days, 90 days, 6 months, 1 year, all time).
+Every chart panel includes a time-range filter (30 days, 90 days, 6 months, 1 year, all time) that dynamically updates both the charts and the summary statistics.
 
 ## Prerequisites
 
@@ -75,8 +75,9 @@ All endpoints return JSON.
 | `GET /api/overview`   | Summary stats for all data types                 |
 | `GET /api/weight`     | Weight records (date, kg)                        |
 | `GET /api/nutrition`  | Daily calorie/macro aggregates + individual meals|
+| `GET /api/bmr`        | Basal Metabolic Rate records converted to kcal/day |
 | `GET /api/steps`      | Daily step totals                                |
-| `GET /api/sleep`      | Sleep sessions with stage breakdown              |
+| `GET /api/sleep`      | Sleep sessions with precise stage breakdown      |
 | `GET /api/exercise`   | Exercise sessions with type, duration, title     |
 | `GET /api/heart-rate` | Daily heart rate min/avg/max                     |
 | `GET /api/spo2`       | Blood oxygen saturation records                  |
