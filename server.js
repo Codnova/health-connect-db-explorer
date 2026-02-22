@@ -2,12 +2,17 @@
 const express = require('express');
 const path = require('path');
 const fs = require('fs');
-const initSqlJs = require('sql.js');
+const sqlJsInit = require('sql.js');
+const multer = require('multer');
 
 const DB_PATH = process.env.HC_DB_PATH || path.join(__dirname, '..', 'health_connect_export.db');
 const PORT = parseInt(process.env.PORT, 10) || 3500;
 
-// Health Connect constants
+// Configure multer to use memory storage
+const upload = multer({
+    storage: multer.memoryStorage(),
+    limits: { fileSize: 500 * 1024 * 1024 } // 500MB max limit
+});
 const EXERCISE_TYPES = {
     0: 'Unknown', 2: 'Badminton', 4: 'Baseball', 5: 'Basketball', 8: 'Biking',
     10: 'Boxing', 11: 'Calisthenics', 13: 'Cricket', 14: 'Dancing', 16: 'Fencing',
@@ -72,8 +77,8 @@ function msToLocalDate(ms, offsetSec) {
     return d.toISOString().slice(0, 10);
 }
 
-function joulesToKcal(j) {
-    return j ? Math.round((j / 4184) * 10) / 10 : 0;
+function calToKcal(cal) {
+    return cal ? Math.round((cal / 1000) * 10) / 10 : 0;
 }
 
 function gramsToKg(g) {
@@ -96,18 +101,53 @@ function msDurationToHours(startMs, endMs) {
 
 async function main() {
     // Load SQLite
-    const SQL = await initSqlJs();
-    const dbBuffer = fs.readFileSync(DB_PATH);
-    const db = new SQL.Database(dbBuffer);
+    let SQL = await sqlJsInit();
+    let db = null;
+
+    try {
+        if (fs.existsSync(DB_PATH)) {
+            const dbBuffer = fs.readFileSync(DB_PATH);
+            db = new SQL.Database(dbBuffer);
+            console.log(`[Init] Loaded database from ${DB_PATH}`);
+        } else {
+            console.log(`[Init] No database found at ${DB_PATH}. Waiting for upload...`);
+        }
+    } catch (e) {
+        console.error(`[Init] Failed to load initial db:`, e.message);
+    }
 
     const app = express();
     app.use(express.static(path.join(__dirname, 'public')));
 
     // ─── API ────────────────────────────────────────────────────
 
+    // DB Upload endpoint
+    app.post('/api/database', upload.single('database'), (req, res) => {
+        try {
+            if (!req.file) {
+                return res.status(400).json({ error: 'No database file provided' });
+            }
+
+            // Close old DB if exists
+            if (db) {
+                try { db.close(); } catch (e) { }
+            }
+
+            // Load new DB buffering in SQL.js
+            db = new SQL.Database(req.file.buffer);
+            console.log(`[API] Successfully loaded new database from upload`);
+            res.json({ success: true, message: 'Database loaded successfully' });
+        } catch (err) {
+            console.error('[upload]', err);
+            res.status(500).json({ error: err.message });
+        }
+    });
+
     // Overview stats
     app.get('/api/overview', (req, res) => {
         try {
+            if (!db) return res.status(400).json({ error: 'Database not loaded' });
+
             const stats = {};
 
             // Date ranges
@@ -154,6 +194,7 @@ async function main() {
     // Weight history
     app.get('/api/weight', (req, res) => {
         try {
+            if (!db) return res.status(400).json({ error: 'Database not loaded' });
             const rows = db.exec(`
                 SELECT time, zone_offset, weight
                 FROM weight_record_table
@@ -176,6 +217,7 @@ async function main() {
     // Nutrition — daily aggregates
     app.get('/api/nutrition', (req, res) => {
         try {
+            if (!db) return res.status(400).json({ error: 'Database not loaded' });
             const limit = Math.min(parseInt(req.query.limit) || 365, 1000);
             const rows = db.exec(`
                 SELECT
@@ -197,7 +239,7 @@ async function main() {
                 const date = msToLocalDate(r[0], r[1]);
                 if (!date) continue;
 
-                const kcal = joulesToKcal(r[4]);
+                const kcal = calToKcal(r[4]);
                 const protein = r[5] || 0;
                 const carbs = r[6] || 0;
                 const fat = r[7] || 0;
@@ -249,6 +291,7 @@ async function main() {
     // Steps — daily totals
     app.get('/api/steps', (req, res) => {
         try {
+            if (!db) return res.status(400).json({ error: 'Database not loaded' });
             const rows = db.exec(`
                 SELECT start_time, start_zone_offset, end_time, count
                 FROM steps_record_table
@@ -275,6 +318,7 @@ async function main() {
     // Sleep sessions with stages
     app.get('/api/sleep', (req, res) => {
         try {
+            if (!db) return res.status(400).json({ error: 'Database not loaded' });
             const sessions = db.exec(`
                 SELECT row_id, start_time, start_zone_offset, end_time, end_zone_offset, title, notes
                 FROM sleep_session_record_table
@@ -336,6 +380,7 @@ async function main() {
     // Exercise sessions
     app.get('/api/exercise', (req, res) => {
         try {
+            if (!db) return res.status(400).json({ error: 'Database not loaded' });
             const rows = db.exec(`
                 SELECT row_id, start_time, start_zone_offset, end_time, exercise_type, title, notes
                 FROM exercise_session_record_table
@@ -376,6 +421,7 @@ async function main() {
     // Heart rate — daily averages/min/max (too many data points for raw)
     app.get('/api/heart-rate', (req, res) => {
         try {
+            if (!db) return res.status(400).json({ error: 'Database not loaded' });
             // Get daily aggregates from the series table joined with parent record
             const rows = db.exec(`
                 SELECT
@@ -426,6 +472,7 @@ async function main() {
     // Oxygen saturation
     app.get('/api/spo2', (req, res) => {
         try {
+            if (!db) return res.status(400).json({ error: 'Database not loaded' });
             const rows = db.exec(`
                 SELECT time, zone_offset, percentage
                 FROM oxygen_saturation_record_table
@@ -448,6 +495,7 @@ async function main() {
     // Body fat
     app.get('/api/body-fat', (req, res) => {
         try {
+            if (!db) return res.status(400).json({ error: 'Database not loaded' });
             const rows = db.exec(`
                 SELECT time, zone_offset, percentage
                 FROM body_fat_record_table
@@ -467,9 +515,34 @@ async function main() {
         }
     });
 
+    // Blood Pressure
+    app.get('/api/blood-pressure', (req, res) => {
+        try {
+            if (!db) return res.status(400).json({ error: 'Database not loaded' });
+            const rows = db.exec(`
+                SELECT time, zone_offset, systolic, diastolic
+                FROM blood_pressure_record_table
+                ORDER BY time ASC
+            `);
+            if (!rows[0]) return res.json([]);
+
+            const data = rows[0].values.map(r => ({
+                date: msToLocalDate(r[0], r[1]),
+                timestamp: msToDate(r[0]),
+                systolic: Math.round(r[2]),
+                diastolic: Math.round(r[3]),
+            }));
+            res.json(data);
+        } catch (err) {
+            console.error('[blood-pressure]', err);
+            res.status(500).json({ error: err.message });
+        }
+    });
+
     // Generic table browser
     app.get('/api/tables', (req, res) => {
         try {
+            if (!db) return res.status(400).json({ error: 'Database not loaded' });
             const tables = db.exec("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name");
             if (!tables[0]) return res.json([]);
 
@@ -487,6 +560,7 @@ async function main() {
 
     app.get('/api/table/:name', (req, res) => {
         try {
+            if (!db) return res.status(400).json({ error: 'Database not loaded' });
             const name = req.params.name;
             // Whitelist check — only allow existing table names
             const tables = db.exec("SELECT name FROM sqlite_master WHERE type='table'");

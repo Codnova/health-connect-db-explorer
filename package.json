@@ -9,6 +9,7 @@
   },
   "dependencies": {
     "express": "^4.21.0",
+    "multer": "^2.0.2",
     "sql.js": "^1.11.0"
   }
 }

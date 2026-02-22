@@ -48,8 +48,15 @@
     // ─── API helper ───
     async function api(url) {
         const res = await fetch(url);
-        if (!res.ok) throw new Error(`API error: ${res.status}`);
-        return res.json();
+        if (res.status === 400) {
+            const data = await res.json();
+            if (data.error === 'Database not loaded') {
+                showUploadModal();
+                throw new Error('Database not loaded');
+            }
+        }
+        if (!res.ok) throw new Error(res.statusText);
+        return await res.json();
     }
 
     // ─── Time filtering helper ───
@@ -104,6 +111,9 @@
                 case 'sleep': await loadSleep(); break;
                 case 'exercise': await loadExercise(); break;
                 case 'heart': await loadHeartRate(); break;
+                case 'blood-pressure': await loadBloodPressure(); break;
+                case 'correlations': await loadCorrelations(); break;
+                case 'goals': await loadGoals(); break;
                 case 'explorer': await loadExplorer(); break;
             }
         } catch (err) {
@@ -459,8 +469,8 @@
         // Color bars based on step count
         const bgColors = data.map(d =>
             d.totalSteps >= 10000 ? COLORS.green + '80' :
-            d.totalSteps >= 5000 ? COLORS.orange + '80' :
-            COLORS.red + '60'
+                d.totalSteps >= 5000 ? COLORS.orange + '80' :
+                    COLORS.red + '60'
         );
 
         charts['steps'] = new Chart(document.getElementById('chart-steps'), {
@@ -496,12 +506,18 @@
         const avgDuration = last30.length ? (last30.reduce((s, d) => s + d.durationHrs, 0) / last30.length).toFixed(1) : '—';
         const avgDeep = last30.length ? Math.round(last30.reduce((s, d) => s + d.deepMin, 0) / last30.length) : 0;
         const avgRem = last30.length ? Math.round(last30.reduce((s, d) => s + d.remMin, 0) / last30.length) : 0;
+        const sleepDebt30d = last30.reduce((s, d) => s + (8 - d.durationHrs), 0).toFixed(1);
 
         panel.innerHTML = `
             <div class="stats-grid">
                 <div class="stat-card">
                     <div class="label">Avg Sleep Duration (30d)</div>
                     <div class="value">${avgDuration} hrs</div>
+                </div>
+                <div class="stat-card">
+                    <div class="label">Sleep Debt (30d)</div>
+                    <div class="value" style="color:${sleepDebt30d > 0 ? 'var(--red)' : 'var(--green)'}">${sleepDebt30d > 0 ? '+' : ''}${sleepDebt30d} hrs</div>
+                    <div class="sub">Compared to 8hr/night baseline</div>
                 </div>
                 <div class="stat-card">
                     <div class="label">Avg Deep Sleep (30d)</div>
@@ -511,16 +527,22 @@
                     <div class="label">Avg REM Sleep (30d)</div>
                     <div class="value" style="color:var(--accent)">${avgRem} min</div>
                 </div>
-                <div class="stat-card">
-                    <div class="label">Total Sessions</div>
-                    <div class="value">${data.length}</div>
-                </div>
             </div>
-            <div class="chart-box">
+            <div class="chart-box" style="margin-bottom:16px">
                 <h3>Sleep Duration</h3>
                 <div class="chart-wrap tall"><canvas id="chart-sleep-duration"></canvas></div>
             </div>
-            <div class="chart-box" style="margin-top:16px">
+            <div class="chart-row two-col" style="margin-bottom:16px">
+                <div class="chart-box">
+                    <h3>Bedtime Consistency</h3>
+                    <div class="chart-wrap"><canvas id="chart-sleep-bedtime"></canvas></div>
+                </div>
+                <div class="chart-box">
+                    <h3>Cumulative Sleep Debt</h3>
+                    <div class="chart-wrap"><canvas id="chart-sleep-debt"></canvas></div>
+                </div>
+            </div>
+            <div class="chart-box">
                 <h3>Sleep Stages Breakdown</h3>
                 <div class="chart-wrap tall"><canvas id="chart-sleep-stages"></canvas></div>
             </div>
@@ -544,8 +566,8 @@
                     data: data.map(d => d.durationHrs),
                     backgroundColor: data.map(d =>
                         d.durationHrs >= 7 ? COLORS.green + '70' :
-                        d.durationHrs >= 5 ? COLORS.orange + '70' :
-                        COLORS.red + '70'
+                            d.durationHrs >= 5 ? COLORS.orange + '70' :
+                                COLORS.red + '70'
                     ),
                     borderRadius: 3,
                 }]
@@ -580,6 +602,77 @@
                 scales: {
                     x: { type: 'time', time: { unit: days && days <= 90 ? 'day' : 'week' }, stacked: true },
                     y: { title: { display: true, text: 'Minutes' }, stacked: true, beginAtZero: true }
+                }
+            }
+        });
+
+        // Bedtime consistency
+        destroyChart('sleepBedtime');
+        const rBedtimes = data.map(d => {
+            const dt = new Date(d.startTime);
+            let hrs = dt.getHours() + dt.getMinutes() / 60;
+            // Shift past midnight forward so 1 AM == 25, for continuous scatter plotting
+            if (hrs < 12) hrs += 24;
+            return { x: d.date, y: hrs };
+        });
+
+        charts['sleepBedtime'] = new Chart(document.getElementById('chart-sleep-bedtime'), {
+            type: 'scatter',
+            data: {
+                datasets: [{
+                    label: 'Bedtime',
+                    data: rBedtimes,
+                    backgroundColor: COLORS.accent,
+                    pointRadius: 4,
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                scales: {
+                    x: { type: 'time', time: { unit: days && days <= 90 ? 'day' : 'week' } },
+                    y: {
+                        title: { display: true, text: 'Time of Day' },
+                        ticks: {
+                            callback: val => {
+                                const h = Math.floor(val) % 24;
+                                const m = Math.round((val - Math.floor(val)) * 60).toString().padStart(2, '0');
+                                return `${h}:${m}`;
+                            }
+                        }
+                    }
+                }
+            }
+        });
+
+        // Cumulative Sleep Debt
+        destroyChart('sleepDebt');
+        let cumDebt = 0;
+        const debtData = data.map(d => {
+            cumDebt += (8 - d.durationHrs);
+            return cumDebt;
+        });
+
+        charts['sleepDebt'] = new Chart(document.getElementById('chart-sleep-debt'), {
+            type: 'line',
+            data: {
+                labels: data.map(d => d.date),
+                datasets: [{
+                    label: 'Cumulative Debt (hrs)',
+                    data: debtData,
+                    borderColor: COLORS.red,
+                    backgroundColor: COLORS.red + '20',
+                    fill: true,
+                    tension: 0.3,
+                    pointRadius: 0,
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                scales: {
+                    x: { type: 'time', time: { unit: days && days <= 90 ? 'day' : 'week' } },
+                    y: { title: { display: true, text: 'Debt (Hours)' } }
                 }
             }
         });
@@ -794,6 +887,282 @@
         });
     }
 
+    // ─── Blood Pressure ───
+    async function loadBloodPressure() {
+        const data = await api('/api/blood-pressure');
+        const panel = document.getElementById('panel-blood-pressure');
+        if (!data.length) { panel.innerHTML = '<div class="stat-card"><div class="label">No blood pressure data</div></div>'; return; }
+
+        const last30 = filterByDays(data, 30);
+        const avgSys = last30.length ? Math.round(last30.reduce((s, d) => s + d.systolic, 0) / last30.length) : '—';
+        const avgDia = last30.length ? Math.round(last30.reduce((s, d) => s + d.diastolic, 0) / last30.length) : '—';
+        const latest = data[data.length - 1];
+
+        panel.innerHTML = `
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <div class="label">Latest Reading</div>
+                    <div class="value" style="color:var(--accent)">${latest.systolic} / ${latest.diastolic}</div>
+                    <div class="sub">${latest.date}</div>
+                </div>
+                <div class="stat-card">
+                    <div class="label">Avg Systolic (30d)</div>
+                    <div class="value">${avgSys} mmHg</div>
+                </div>
+                <div class="stat-card">
+                    <div class="label">Avg Diastolic (30d)</div>
+                    <div class="value">${avgDia} mmHg</div>
+                </div>
+                <div class="stat-card">
+                    <div class="label">Total Readings</div>
+                    <div class="value">${data.length}</div>
+                </div>
+            </div>
+            <div class="chart-box">
+                <h3>Blood Pressure Over Time</h3>
+                <div class="chart-wrap tall"><canvas id="chart-bp"></canvas></div>
+            </div>
+        `;
+
+        const defaultDays = addTimeFilter(panel, (days) => renderBPChart(data, days));
+        renderBPChart(data, defaultDays);
+    }
+
+    function renderBPChart(allData, days) {
+        const data = filterByDays(allData, days);
+        destroyChart('bp');
+        charts['bp'] = new Chart(document.getElementById('chart-bp'), {
+            type: 'line',
+            data: {
+                labels: data.map(d => d.date),
+                datasets: [
+                    {
+                        label: 'Systolic',
+                        data: data.map(d => d.systolic),
+                        borderColor: COLORS.orange,
+                        backgroundColor: COLORS.orange + '20',
+                        fill: false,
+                        tension: 0.3,
+                        pointRadius: 3,
+                    },
+                    {
+                        label: 'Diastolic',
+                        data: data.map(d => d.diastolic),
+                        borderColor: COLORS.lightBlue,
+                        backgroundColor: COLORS.lightBlue + '20',
+                        fill: false,
+                        tension: 0.3,
+                        pointRadius: 3,
+                    }
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                scales: {
+                    x: { type: 'time', time: { unit: days && days <= 90 ? 'day' : 'week' } },
+                    y: { title: { display: true, text: 'mmHg' } }
+                }
+            }
+        });
+    }
+
+    // ─── Correlations ───
+    const METRIC_DEFS = {
+        weight: { url: '/api/weight', label: 'Weight (kg)', extract: d => d.weightKg },
+        bodyFat: { url: '/api/body-fat', label: 'Body Fat (%)', extract: d => d.percentage },
+        steps: { url: '/api/steps', label: 'Steps', extract: d => d.totalSteps },
+        calories: { url: '/api/nutrition', label: 'Calories In (kcal)', extract: d => ({ date: d.date, val: d.kcal }), isDaily: true },
+        sleep: { url: '/api/sleep', label: 'Sleep Duration (hrs)', extract: d => d.durationHrs },
+        restHr: { url: '/api/heart-rate', label: 'Resting HR (bpm)', extract: d => d.minBpm },
+    };
+
+    function pearson(d1, d2) {
+        let sum1 = 0, sum2 = 0, sum1Sq = 0, sum2Sq = 0, pSum = 0;
+        const n = d1.length;
+        if (n === 0) return 0;
+        for (let i = 0; i < n; i++) {
+            sum1 += d1[i]; sum2 += d2[i];
+            sum1Sq += d1[i] ** 2; sum2Sq += d2[i] ** 2;
+            pSum += d1[i] * d2[i];
+        }
+        const num = pSum - (sum1 * sum2 / n);
+        const den = Math.sqrt((sum1Sq - sum1 ** 2 / n) * (sum2Sq - sum2 ** 2 / n));
+        return den === 0 ? 0 : num / den;
+    }
+
+    async function loadCorrelations() {
+        const panel = document.getElementById('panel-correlations');
+        panel.innerHTML = `
+            <div class="explorer-controls" style="margin-bottom:24px">
+                <select id="corr-m1">
+                    ${Object.entries(METRIC_DEFS).map(([k, v]) => `<option value="${k}" ${k === 'steps' ? 'selected' : ''}>${v.label}</option>`).join('')}
+                </select>
+                <span class="info">vs</span>
+                <select id="corr-m2">
+                    ${Object.entries(METRIC_DEFS).map(([k, v]) => `<option value="${k}" ${k === 'sleep' ? 'selected' : ''}>${v.label}</option>`).join('')}
+                </select>
+                <div id="corr-stat" class="pill blue" style="font-size:14px; margin-left:16px;">Pearson: —</div>
+            </div>
+            <div class="chart-box">
+                <h3>Correlation Over Time</h3>
+                <div class="chart-wrap tall"><canvas id="chart-corr"></canvas></div>
+            </div>
+            <div class="chart-box" style="margin-top:16px">
+                <h3>Scatter Plot</h3>
+                <div class="chart-wrap tall"><canvas id="chart-corr-scatter"></canvas></div>
+            </div>
+        `;
+
+        async function updateCorr() {
+            const m1Key = document.getElementById('corr-m1').value;
+            const m2Key = document.getElementById('corr-m2').value;
+            const def1 = METRIC_DEFS[m1Key];
+            const def2 = METRIC_DEFS[m2Key];
+
+            let row1 = await api(def1.url);
+            let row2 = await api(def2.url);
+
+            if (def1.isDaily) row1 = row1.daily;
+            if (def2.isDaily) row2 = row2.daily;
+
+            const map1 = new Map(row1.map(d => [d.date, def1.extract(d)]));
+            const map2 = new Map(row2.map(d => [d.date, def2.extract(d)]));
+
+            // Find overlapping dates
+            const dates = Array.from(new Set([...map1.keys(), ...map2.keys()])).sort();
+            const overlap = dates.filter(d => map1.has(d) && map2.has(d));
+
+            const val1 = overlap.map(d => map1.get(d));
+            const val2 = overlap.map(d => map2.get(d));
+
+            const p = pearson(val1, val2);
+            document.getElementById('corr-stat').textContent = `Pearson: ${p.toFixed(2)}`;
+
+            destroyChart('corrLine');
+            charts['corrLine'] = new Chart(document.getElementById('chart-corr'), {
+                type: 'line',
+                data: {
+                    labels: overlap,
+                    datasets: [
+                        { label: def1.label, data: val1, borderColor: COLORS.accent, yAxisID: 'y1', tension: 0.3, pointRadius: 2 },
+                        { label: def2.label, data: val2, borderColor: COLORS.orange, yAxisID: 'y2', tension: 0.3, pointRadius: 2 }
+                    ]
+                },
+                options: {
+                    responsive: true, maintainAspectRatio: false,
+                    scales: {
+                        x: { type: 'time', time: { unit: 'day' } },
+                        y1: { type: 'linear', position: 'left', title: { display: true, text: def1.label } },
+                        y2: { type: 'linear', position: 'right', title: { display: true, text: def2.label }, grid: { drawOnChartArea: false } }
+                    }
+                }
+            });
+
+            destroyChart('corrScatter');
+            charts['corrScatter'] = new Chart(document.getElementById('chart-corr-scatter'), {
+                type: 'scatter',
+                data: {
+                    datasets: [{
+                        label: 'Days',
+                        data: overlap.map((d, i) => ({ x: val1[i], y: val2[i], date: d })),
+                        backgroundColor: COLORS.pink,
+                        pointRadius: 4,
+                    }]
+                },
+                options: {
+                    responsive: true, maintainAspectRatio: false,
+                    scales: {
+                        x: { title: { display: true, text: def1.label } },
+                        y: { title: { display: true, text: def2.label } }
+                    },
+                    plugins: {
+                        tooltip: {
+                            callbacks: {
+                                label: ctx => `${ctx.raw.date}: ${ctx.parsed.x}, ${ctx.parsed.y}`
+                            }
+                        }
+                    }
+                }
+            });
+        }
+
+        document.getElementById('corr-m1').addEventListener('change', updateCorr);
+        document.getElementById('corr-m2').addEventListener('change', updateCorr);
+        updateCorr();
+    }
+
+    // ─── Goals ───
+    async function loadGoals() {
+        const panel = document.getElementById('panel-goals');
+        const goals = JSON.parse(localStorage.getItem('hc_goals') || '{"steps": 10000, "sleep": 8, "calories": 2500}');
+
+        panel.innerHTML = `
+            <div class="chart-box" style="margin-bottom:24px">
+                <h3>Set Daily Targets</h3>
+                <div class="explorer-controls">
+                    <label>Steps: <input type="number" id="goal-steps" value="${goals.steps}" style="width:80px;"></label>
+                    <label>Sleep (hrs): <input type="number" id="goal-sleep" value="${goals.sleep}" style="width:60px;"></label>
+                    <label>Calories: <input type="number" id="goal-calories" value="${goals.calories}" style="width:80px;"></label>
+                    <button id="save-goals" class="pill blue">Save Goals</button>
+                </div>
+            </div>
+            <div id="goals-content"><div class="loading">Calculating...</div></div>
+        `;
+
+        document.getElementById('save-goals').addEventListener('click', () => {
+            goals.steps = parseInt(document.getElementById('goal-steps').value) || 10000;
+            goals.sleep = parseFloat(document.getElementById('goal-sleep').value) || 8;
+            goals.calories = parseInt(document.getElementById('goal-calories').value) || 2500;
+            localStorage.setItem('hc_goals', JSON.stringify(goals));
+            renderGoals(goals);
+        });
+
+        async function renderGoals(g) {
+            const content = document.getElementById('goals-content');
+            try {
+                const [stepsRes, sleepRes, nutRes] = await Promise.all([
+                    api('/api/steps'), api('/api/sleep'), api('/api/nutrition')
+                ]);
+
+                const stepsLast30 = filterByDays(stepsRes, 30);
+                const sleepLast30 = filterByDays(sleepRes, 30);
+                const nutLast30 = filterByDays(nutRes.daily, 30);
+
+                const hitCount = (arr, extractor, target, isMax = false) => {
+                    return arr.reduce((count, d) => count + ((isMax ? extractor(d) <= target : extractor(d) >= target) ? 1 : 0), 0);
+                };
+
+                const stepsHit = hitCount(stepsLast30, d => d.totalSteps, g.steps);
+                const sleepHit = hitCount(sleepLast30, d => d.durationHrs, g.sleep);
+                const calHit = hitCount(nutLast30, d => d.kcal, g.calories, true); // calories usually have a max limit
+
+                content.innerHTML = `
+                    <div class="stats-grid">
+                        <div class="stat-card">
+                            <div class="label">Steps Goal (${g.steps.toLocaleString()})</div>
+                            <div class="value" style="color:var(--green)">${stepsHit} / 30</div>
+                            <div class="sub">Days Hit in Last Month</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="label">Sleep Goal (${g.sleep} hrs)</div>
+                            <div class="value" style="color:var(--purple)">${sleepHit} / 30</div>
+                            <div class="sub">Days Hit in Last Month</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="label">Calorie Goal (< ${g.calories})</div>
+                            <div class="value" style="color:var(--orange)">${calHit} / 30</div>
+                            <div class="sub">Days Under Target in Last Month</div>
+                        </div>
+                    </div>
+                `;
+            } catch (err) {
+                content.innerHTML = `<div class="stat-card"><div class="label">Error</div><div class="sub">${err.message}</div></div>`;
+            }
+        }
+        renderGoals(goals);
+    }
+
     // ─── Data Explorer ───
     async function loadExplorer() {
         const tables = await api('/api/tables');
@@ -857,17 +1226,89 @@
     }
 
     function formatCell(val) {
-        if (val == null) return '<span style="color:var(--text2)">null</span>';
-        if (val instanceof Uint8Array || (typeof val === 'object' && val !== null)) return '<span style="color:var(--text2)">[binary]</span>';
+        if (val === null) return `<span style="color:var(--text2)">NULL</span>`;
         if (typeof val === 'number') {
-            // Detect epoch milliseconds (> year 2000 in ms)
-            if (val > 946684800000 && val < 2000000000000) {
-                return `<span title="${val}">${new Date(val).toLocaleString()}</span>`;
+            if (val > 1e12 && val < 2e12) { // Looks like a timestamp
+                return `<span class="pill blue">${escHtml(val + '')}</span> <span style="font-size:11px;color:var(--text2)">${new Date(val).toISOString()}</span>`;
             }
-            return val.toLocaleString();
+            return `<span style="color:var(--orange)">${val}</span>`;
         }
-        return escHtml(String(val));
+        return escHtml(val + '');
     }
+
+    // ─── db Upload Logic ───
+    const uploadOverlay = document.getElementById('upload-overlay');
+    const fileInput = document.getElementById('dbFileInput');
+    const fileNameDisplay = document.getElementById('fileNameDisplay');
+    const submitBtn = document.getElementById('submitBtn');
+    const fileLabel = document.getElementById('fileLabel');
+    const uploadError = document.getElementById('uploadError');
+
+    function showUploadModal() {
+        uploadOverlay.classList.add('active');
+        fileInput.value = '';
+        fileNameDisplay.textContent = '';
+        submitBtn.style.display = 'none';
+        uploadError.style.display = 'none';
+    }
+
+    function hideUploadModal() {
+        uploadOverlay.classList.remove('active');
+    }
+
+    fileInput.addEventListener('change', (e) => {
+        const file = e.target.files[0];
+        if (file) {
+            fileNameDisplay.textContent = file.name;
+            submitBtn.style.display = 'inline-block';
+            fileLabel.textContent = 'Change DB File';
+            uploadError.style.display = 'none';
+        } else {
+            fileNameDisplay.textContent = '';
+            submitBtn.style.display = 'none';
+            fileLabel.textContent = 'Choose DB File';
+        }
+    });
+
+    submitBtn.addEventListener('click', async () => {
+        const file = fileInput.files[0];
+        if (!file) return;
+
+        submitBtn.disabled = true;
+        submitBtn.textContent = 'Uploading & Loading...';
+        uploadError.style.display = 'none';
+
+        const formData = new FormData();
+        formData.append('database', file);
+
+        try {
+            const res = await fetch('/api/database', {
+                method: 'POST',
+                body: formData
+            });
+
+            if (!res.ok) {
+                const data = await res.json();
+                throw new Error(data.error || 'Upload failed');
+            }
+
+            // Success loading DB, hide modal and reload data on current active panel
+            hideUploadModal();
+            const activePanelBtn = document.querySelector('.nav button.active');
+            if (activePanelBtn) {
+                // Remove the error UI and reset loading state inside panels
+                document.querySelectorAll('.panel').forEach(p => {
+                    p.innerHTML = `<div class="loading">Loading...</div>`;
+                });
+                loadPanel(activePanelBtn.dataset.panel);
+            }
+        } catch (err) {
+            uploadError.textContent = err.message;
+            uploadError.style.display = 'block';
+            submitBtn.disabled = false;
+            submitBtn.textContent = 'Load Database';
+        }
+    });
 
     // ─── Boot ───
     loadPanel('overview');
