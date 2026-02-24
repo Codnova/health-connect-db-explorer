@@ -98,6 +98,37 @@
         if (charts[id]) { charts[id].destroy(); delete charts[id]; }
     }
 
+    // ─── Time Math Helper (Circular Mean) ───
+    function getAverageTimeOfDay(dateStrings) {
+        if (!dateStrings || !dateStrings.length) return '—';
+        let sumSin = 0;
+        let sumCos = 0;
+
+        for (const ds of dateStrings) {
+            const d = new Date(ds);
+            let hours = d.getHours() + d.getMinutes() / 60 + d.getSeconds() / 3600;
+            // Convert hours to radians (24 hours = 2 * PI)
+            let radians = (hours / 24) * 2 * Math.PI;
+            sumSin += Math.sin(radians);
+            sumCos += Math.cos(radians);
+        }
+
+        const avgSin = sumSin / dateStrings.length;
+        const avgCos = sumCos / dateStrings.length;
+
+        let avgRadians = Math.atan2(avgSin, avgCos);
+        if (avgRadians < 0) avgRadians += 2 * Math.PI;
+
+        let avgHours = (avgRadians / (2 * Math.PI)) * 24;
+
+        const h = Math.floor(avgHours);
+        const m = Math.round((avgHours - h) * 60);
+
+        const d = new Date();
+        d.setHours(h, m, 0);
+        return d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+    }
+
     // ─── Panel loaders ───
     async function loadPanel(name) {
         if (loadedPanels.has(name)) return;
@@ -303,6 +334,16 @@
                     <div class="chart-wrap"><canvas id="chart-macro-pie"></canvas></div>
                 </div>
             </div>
+            <div class="chart-row two-col">
+                <div class="chart-box">
+                    <h3>Day of Week Averages</h3>
+                    <div class="chart-wrap tall"><canvas id="chart-nutrition-dow"></canvas></div>
+                </div>
+                <div class="chart-box">
+                    <h3>Frequent Meals</h3>
+                    <div id="frequent-meals-list" style="margin-top: 8px; max-height: 380px; overflow-y: auto; padding-right: 8px;"></div>
+                </div>
+            </div>
             <div class="chart-box">
                 <h3>Recent Meals</h3>
                 <div class="table-wrap" style="max-height:400px;overflow-y:auto">
@@ -320,15 +361,15 @@
             localStorage.setItem('hc_activity_factor', activityFactor);
             const activeFilter = document.querySelector('#panel-nutrition .time-filters .active');
             const days = parseInt(activeFilter ? activeFilter.dataset.days : 30) || 0;
-            renderNutritionStats(daily, days, bmrMap, activityFactor);
+            renderNutritionStats(daily, meals, days, bmrMap, activityFactor);
             renderNutritionCharts(daily, days, bmrMap, activityFactor);
         });
 
         const defaultDays = addTimeFilter(panel, (days) => {
-            renderNutritionStats(daily, days, bmrMap, activityFactor);
+            renderNutritionStats(daily, meals, days, bmrMap, activityFactor);
             renderNutritionCharts(daily, days, bmrMap, activityFactor);
         });
-        renderNutritionStats(daily, defaultDays, bmrMap, activityFactor);
+        renderNutritionStats(daily, meals, defaultDays, bmrMap, activityFactor);
         renderNutritionCharts(daily, defaultDays, bmrMap, activityFactor);
 
         // Meals table (last 100)
@@ -347,7 +388,7 @@
         `).join('');
     }
 
-    function renderNutritionStats(allDaily, days, bmrMap, af) {
+    function renderNutritionStats(allDaily, allMeals, days, bmrMap, af) {
         const daily = filterByDays(allDaily, days);
         const avg = (arr, key) => arr.length ? Math.round(arr.reduce((s, d) => s + d[key], 0) / arr.length) : 0;
 
@@ -399,6 +440,26 @@
                 <div class="value" style="color:var(--pink)">${avg(daily, 'fat')}g</div>
             </div>
         `;
+
+        const filteredMeals = filterByDays(allMeals, days, 'date');
+        const mealCounts = {};
+        filteredMeals.forEach(m => {
+            if (!m.mealName || m.mealName === '(unnamed)') return;
+            const key = m.mealName.trim();
+            if (!mealCounts[key]) mealCounts[key] = { count: 0, kcal: Math.round(m.kcal) };
+            mealCounts[key].count++;
+        });
+
+        const topMeals = Object.entries(mealCounts)
+            .sort((a, b) => b[1].count - a[1].count || b[1].kcal - a[1].kcal)
+            .slice(0, 10);
+
+        document.getElementById('frequent-meals-list').innerHTML = topMeals.length ? topMeals.map(m => `
+            <div style="display:flex; justify-content:space-between; padding:10px 0; border-bottom:1px solid var(--border)">
+                <span style="font-weight:600; font-size: 13px;">${escHtml(m[0])}</span>
+                <span style="color:var(--text2); font-size: 13px;">${m[1].count}x &nbsp;<span class="pill blue" style="font-weight:normal; margin-left: 4px;">${m[1].kcal} kcal</span></span>
+            </div>
+        `).join('') : '<div style="color:var(--text2); padding: 12px 0;">Not enough data</div>';
     }
 
     function renderNutritionCharts(allDaily, days, bmrMap, af) {
@@ -504,6 +565,41 @@
                         }
                     }
                 }
+            }
+        });
+
+        // Day-of-Week Averages
+        const dowSums = [0, 0, 0, 0, 0, 0, 0];
+        const dowCounts = [0, 0, 0, 0, 0, 0, 0];
+        daily.forEach(d => {
+            const dayIdx = new Date(d.date + 'T00:00:00').getDay();
+            dowSums[dayIdx] += d.kcal;
+            dowCounts[dayIdx]++;
+        });
+        const dowAvgs = dowSums.map((s, i) => dowCounts[i] ? Math.round(s / dowCounts[i]) : 0);
+
+        destroyChart('nutritionDow');
+        charts['nutritionDow'] = new Chart(document.getElementById('chart-nutrition-dow'), {
+            type: 'bar',
+            data: {
+                labels: ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'],
+                datasets: [{
+                    label: 'Avg kcal',
+                    data: dowAvgs,
+                    backgroundColor: COLORS.accent + '80',
+                    borderRadius: 3,
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                scales: {
+                    x: {
+                        grid: { display: false }
+                    },
+                    y: { title: { display: true, text: 'kcal' }, beginAtZero: true }
+                },
+                plugins: { legend: { display: false } }
             }
         });
     }
@@ -637,12 +733,25 @@
         const avgRem = data.length ? Math.round(data.reduce((s, d) => s + d.remMin, 0) / data.length) : 0;
         const sleepDebt = data.reduce((s, d) => s + (8 - d.durationHrs), 0).toFixed(1);
 
+        const bedtimes = data.map(d => d.startTime);
+        const wakeups = data.map(d => d.endTime);
+        const avgBedtime = getAverageTimeOfDay(bedtimes);
+        const avgWakeup = getAverageTimeOfDay(wakeups);
+
         const labelSuffix = days ? `(${days}d)` : '(All Time)';
 
         document.getElementById('sleep-stats').innerHTML = `
             <div class="stat-card">
                 <div class="label">Avg Sleep Duration ${labelSuffix}</div>
                 <div class="value">${avgDuration} hrs</div>
+            </div>
+            <div class="stat-card">
+                <div class="label">Avg Bedtime ${labelSuffix}</div>
+                <div class="value" style="color:var(--accent)">${avgBedtime}</div>
+            </div>
+            <div class="stat-card">
+                <div class="label">Avg Wake-up ${labelSuffix}</div>
+                <div class="value" style="color:var(--orange)">${avgWakeup}</div>
             </div>
             <div class="stat-card">
                 <div class="label">Sleep Debt ${labelSuffix}</div>
@@ -655,7 +764,7 @@
             </div>
             <div class="stat-card">
                 <div class="label">Avg REM Sleep ${labelSuffix}</div>
-                <div class="value" style="color:var(--accent)">${avgRem} min</div>
+                <div class="value" style="color:var(--lightBlue)">${avgRem} min</div>
             </div>
         `;
     }
@@ -844,6 +953,40 @@
     }
 
     // ─── Exercise ───
+    function getExerciseStreakAndFrequency(data) {
+        if (!data.length) return { streak: 0, perWeek: 0 };
+        let maxStreak = 0;
+        let currentStreak = 0;
+        let lastDate = null;
+
+        const uniqueDays = [...new Set(data.map(d => d.date))].sort();
+
+        for (const dateStr of uniqueDays) {
+            const d = new Date(dateStr);
+            if (!lastDate) {
+                currentStreak = 1;
+                maxStreak = 1;
+            } else {
+                const diffTime = Math.abs(d - lastDate);
+                const diffDays = Math.round(diffTime / (1000 * 60 * 60 * 24));
+                if (diffDays === 1) {
+                    currentStreak++;
+                    if (currentStreak > maxStreak) maxStreak = currentStreak;
+                } else if (diffDays > 1) {
+                    currentStreak = 1;
+                }
+            }
+            lastDate = d;
+        }
+
+        const firstDay = new Date(uniqueDays[0]);
+        const lastDayObj = new Date(uniqueDays[uniqueDays.length - 1]);
+        const totalDaysSpan = Math.max(1, Math.round(Math.abs(lastDayObj - firstDay) / (1000 * 60 * 60 * 24))) + 1;
+        const perWeek = ((data.length / totalDaysSpan) * 7).toFixed(1);
+
+        return { streak: maxStreak, perWeek };
+    }
+
     async function loadExercise() {
         const data = await api('/api/exercise');
         const panel = document.getElementById('panel-exercise');
@@ -856,8 +999,17 @@
         });
         const sortedTypes = Object.entries(typeCounts).sort((a, b) => b[1] - a[1]);
 
-        // Stats now handled by renderExerciseStats
+        let currentExerciseType = 'All';
+
         panel.innerHTML = `
+            <div class="explorer-controls" style="margin-bottom:16px;text-align:right">
+                <label style="font-size:14px;color:var(--text2)">Exercise Type: 
+                    <select id="exercise-type-filter" style="margin-left:8px;padding:4px;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:4px">
+                        <option value="All">All Types</option>
+                        ${sortedTypes.map(t => `<option value="${t[0]}">${t[0]}</option>`).join('')}
+                    </select>
+                </label>
+            </div>
             <div id="exercise-stats" class="stats-grid"></div>
             <div class="chart-row two-col">
                 <div class="chart-box">
@@ -882,18 +1034,37 @@
 
         const typeColors = [COLORS.accent, COLORS.accent2, COLORS.green, COLORS.orange, COLORS.purple, COLORS.pink, COLORS.yellow, COLORS.red, COLORS.lightBlue];
 
-        // This chart-rendering code will be triggered by addTimeFilter
-        const defaultDays = addTimeFilter(panel, (days) => {
-            renderExerciseStats(data, days);
-            renderExerciseCharts(data, days, typeColors);
+        function filterExercise(allData, days, type) {
+            let ft = filterByDays(allData, days);
+            if (type !== 'All') ft = ft.filter(d => d.exerciseType === type);
+            return ft;
+        }
+
+        function updateAll() {
+            const activeFilter = document.querySelector('#panel-exercise .time-filter .active');
+            const days = activeFilter ? parseInt(activeFilter.textContent.includes('All') ? 0 : activeFilter.textContent) : 90;
+            // the filterByDays uses passed days, so we can just rely on the time filter. actually we can just pass the current active days.
+            const dataFiltered = filterExercise(data, days, currentExerciseType);
+            renderExerciseStats(dataFiltered, days ? days : 0);
+            renderExerciseCharts(dataFiltered, days ? days : 0, typeColors);
+        }
+
+        document.getElementById('exercise-type-filter').addEventListener('change', (e) => {
+            currentExerciseType = e.target.value;
+            updateAll();
         });
-        renderExerciseStats(data, defaultDays);
-        renderExerciseCharts(data, defaultDays, typeColors);
+
+        const defaultDays = addTimeFilter(panel, (days) => {
+            const dataFiltered = filterExercise(data, days, currentExerciseType);
+            renderExerciseStats(dataFiltered, days);
+            renderExerciseCharts(dataFiltered, days, typeColors);
+        });
+        const dataFiltered = filterExercise(data, defaultDays, currentExerciseType);
+        renderExerciseStats(dataFiltered, defaultDays);
+        renderExerciseCharts(dataFiltered, defaultDays, typeColors);
     }
 
-    function renderExerciseStats(allData, days) {
-        const data = filterByDays(allData, days);
-
+    function renderExerciseStats(data, days) {
         const typeCounts = {};
         data.forEach(d => {
             typeCounts[d.exerciseType] = (typeCounts[d.exerciseType] || 0) + 1;
@@ -901,6 +1072,7 @@
         const sortedTypes = Object.entries(typeCounts).sort((a, b) => b[1] - a[1]);
 
         const totalMin = data.reduce((s, d) => s + d.durationMin, 0);
+        const insights = getExerciseStreakAndFrequency(data);
 
         const labelSuffix = days ? `(${days}d)` : '(All Time)';
 
@@ -915,6 +1087,14 @@
                 <div class="sub">${totalMin.toLocaleString()} minutes</div>
             </div>
             <div class="stat-card">
+                <div class="label">Workouts / Week</div>
+                <div class="value" style="color:var(--accent2)">${insights.perWeek}</div>
+            </div>
+            <div class="stat-card">
+                <div class="label">Longest Streak</div>
+                <div class="value" style="color:var(--orange)">${insights.streak} days</div>
+            </div>
+            <div class="stat-card">
                 <div class="label">Most Common ${labelSuffix}</div>
                 <div class="value" style="font-size:20px">${sortedTypes[0]?.[0] || '—'}</div>
                 <div class="sub">${sortedTypes[0]?.[1] || 0} sessions</div>
@@ -922,8 +1102,7 @@
         `;
     }
 
-    function renderExerciseCharts(allData, days, typeColors) {
-        const data = filterByDays(allData, days);
+    function renderExerciseCharts(data, days, typeColors) {
 
         // Count by type using the filtered data
         const typeCounts = {};
@@ -1176,7 +1355,8 @@
         weight: { url: '/api/weight', label: 'Weight (kg)', extract: d => d.weightKg },
         bodyFat: { url: '/api/body-fat', label: 'Body Fat (%)', extract: d => d.percentage },
         steps: { url: '/api/steps', label: 'Steps', extract: d => d.totalSteps },
-        calories: { url: '/api/nutrition', label: 'Calories In (kcal)', extract: d => ({ date: d.date, val: d.kcal }), isDaily: true },
+        calories: { url: '/api/nutrition', label: 'Calories In (kcal)', extract: d => d.kcal, isDaily: true },
+        balance: { custom: 'balance', label: 'Caloric Balance (kcal)' },
         sleep: { url: '/api/sleep', label: 'Sleep Duration (hrs)', extract: d => d.durationHrs },
         restHr: { url: '/api/heart-rate', label: 'Resting HR (bpm)', extract: d => d.minBpm },
     };
@@ -1218,20 +1398,37 @@
             </div>
         `;
 
+        async function fetchMetricData(def) {
+            if (def.custom === 'balance') {
+                const [nutRes, bmrRes] = await Promise.all([
+                    api('/api/nutrition'),
+                    api('/api/bmr').catch(() => ([]))
+                ]);
+                const bmrMap = new Map(bmrRes.map(d => [d.date, d.bmr]));
+                const af = parseFloat(localStorage.getItem('hc_activity_factor')) || 1.2;
+
+                return nutRes.daily.map(d => {
+                    const balance = bmrMap.has(d.date) ? d.kcal - Math.round(bmrMap.get(d.date) * af) : null;
+                    return { date: d.date, val: balance };
+                }).filter(d => d.val !== null);
+            } else {
+                let res = await api(def.url);
+                if (def.isDaily) res = res.daily;
+                return res.map(d => ({ date: d.date, val: def.extract(d) }));
+            }
+        }
+
         async function updateCorr() {
             const m1Key = document.getElementById('corr-m1').value;
             const m2Key = document.getElementById('corr-m2').value;
             const def1 = METRIC_DEFS[m1Key];
             const def2 = METRIC_DEFS[m2Key];
 
-            let row1 = await api(def1.url);
-            let row2 = await api(def2.url);
+            const row1 = await fetchMetricData(def1);
+            const row2 = await fetchMetricData(def2);
 
-            if (def1.isDaily) row1 = row1.daily;
-            if (def2.isDaily) row2 = row2.daily;
-
-            const map1 = new Map(row1.map(d => [d.date, def1.extract(d)]));
-            const map2 = new Map(row2.map(d => [d.date, def2.extract(d)]));
+            const map1 = new Map(row1.map(d => [d.date, d.val]));
+            const map2 = new Map(row2.map(d => [d.date, d.val]));
 
             // Find overlapping dates
             const dates = Array.from(new Set([...map1.keys(), ...map2.keys()])).sort();
