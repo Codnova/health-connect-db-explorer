@@ -207,8 +207,15 @@
             </div>
         `;
 
+        let sourceText = d.dbSource ? d.dbSource.split(/[\\/]/).pop() : 'DB';
         document.getElementById('dbInfo').textContent =
-            `${fmtDate(d.nutrition?.min || d.steps?.min)} to ${fmtDate(d.nutrition?.max || d.steps?.max)}`;
+            `[${sourceText}] ${fmtDate(d.nutrition?.min || d.steps?.min)} to ${fmtDate(d.nutrition?.max || d.steps?.max)}`;
+
+        const changeDbHeaderBtn = document.getElementById('changeDbHeaderBtn');
+        if (changeDbHeaderBtn) {
+            changeDbHeaderBtn.style.display = 'inline-block';
+            changeDbHeaderBtn.onclick = showUploadModal;
+        }
     }
 
     // ─── Weight ───
@@ -1025,7 +1032,7 @@
                 <h3>Recent Sessions</h3>
                 <div class="table-wrap" style="max-height:400px;overflow-y:auto">
                     <table>
-                        <thead><tr><th>Date</th><th>Type</th><th>Title</th><th>Duration</th></tr></thead>
+                        <thead><tr><th>Date</th><th>Type</th><th>Title</th><th>Duration</th><th>Sets/Reps</th></tr></thead>
                         <tbody id="exercise-table"></tbody>
                     </table>
                 </div>
@@ -1170,6 +1177,7 @@
                 <td><span class="pill green">${escHtml(d.exerciseType)}</span></td>
                 <td>${escHtml(d.title)}</td>
                 <td>${d.durationMin} min</td>
+                <td>${d.totalSets > 0 ? `<span class="pill blue">${d.totalSets} sets, ${d.totalReps} reps</span>` : '<span style="color:var(--text2)">—</span>'}</td>
             </tr>
         `).join('');
     }
@@ -1697,6 +1705,10 @@
             hideUploadModal();
             const activePanelBtn = document.querySelector('.nav button.active');
             if (activePanelBtn) {
+                loadedPanels.clear();
+                overviewData = null;
+                Object.keys(charts).forEach(destroyChart);
+
                 // Remove the error UI and reset loading state inside panels
                 document.querySelectorAll('.panel').forEach(p => {
                     p.innerHTML = `<div class="loading">Loading...</div>`;

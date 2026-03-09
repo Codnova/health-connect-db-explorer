@@ -424,7 +424,10 @@
 <body>
     <div class="header">
         <h1>Health Connect Explorer</h1>
-        <span class="subtitle" id="dbInfo">Loading...</span>
+        <div style="display: flex; align-items: center; gap: 12px;">
+            <span class="subtitle" id="dbInfo">Loading...</span>
+            <button id="changeDbHeaderBtn" style="background: var(--surface2); border: 1px solid var(--border); color: var(--text); padding: 4px 10px; border-radius: 6px; font-size: 12px; cursor: pointer; display: none; transition: all 0.2s;">Change Database</button>
+        </div>
     </div>
     <div class="nav" id="nav">
         <button class="active" data-panel="overview">Overview</button>

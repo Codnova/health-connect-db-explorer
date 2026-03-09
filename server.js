@@ -5,7 +5,6 @@ const fs = require('fs');
 const sqlJsInit = require('sql.js');
 const multer = require('multer');
 
-const DB_PATH = process.env.HC_DB_PATH || path.join(__dirname, '..', 'health_connect_export.db');
 const PORT = parseInt(process.env.PORT, 10) || 3500;
 
 // Configure multer to use memory storage
@@ -13,6 +12,7 @@ const upload = multer({
     storage: multer.memoryStorage(),
     limits: { fileSize: 500 * 1024 * 1024 } // 500MB max limit
 });
+// The DB export uses an older sequence of internal integer IDs which differs from the public Android 14 SDK constants.
 const EXERCISE_TYPES = {
     0: 'Unknown', 2: 'Badminton', 4: 'Baseball', 5: 'Basketball', 8: 'Biking',
     10: 'Boxing', 11: 'Calisthenics', 13: 'Cricket', 14: 'Dancing', 16: 'Fencing',
@@ -23,40 +23,10 @@ const EXERCISE_TYPES = {
     37: 'Rowing', 38: 'Rugby', 39: 'Running', 40: 'Sailing', 42: 'Scuba Diving',
     43: 'Skating', 44: 'Skiing', 45: 'Snowboarding', 46: 'Snowshoeing',
     47: 'Soccer', 48: 'Softball', 49: 'Squash', 50: 'Stair Climbing',
-    51: 'Strength Training', 52: 'Stretching', 53: 'Surfing', 54: 'Swimming (Open Water)',
-    55: 'Swimming (Pool)', 56: 'Table Tennis', 57: 'Tennis', 58: 'Weightlifting',
-    59: 'Volleyball', 61: 'Walking', 62: 'Water Polo', 63: 'Wheelchair',
-    64: 'Yoga', 75: 'Elliptical', 76: 'Rowing Machine', 77: 'Stair Climbing Machine',
-    78: 'Exercise Class', 79: 'Other',
-};
-
-// Actually — looking at the data, type 53 appears frequently and is "walking" in some mappings
-// Let me use a simpler mapping based on what the Health Connect Android SDK uses
-const EXERCISE_TYPE_MAP = {
-    0: 'Other', 1: 'Back Extension', 2: 'Badminton', 3: 'Barbell Shoulder Press',
-    4: 'Baseball', 5: 'Basketball', 6: 'Bench Press', 7: 'Bench Sit-Up',
-    8: 'Biking', 9: 'Biking (Stationary)', 10: 'Boot Camp', 11: 'Boxing',
-    12: 'Burpee', 13: 'Calisthenics', 14: 'Cricket', 15: 'Crunch',
-    16: 'Dancing', 17: 'Deadlift', 18: 'Dumbbell Curl (Right)', 19: 'Dumbbell Curl (Left)',
-    20: 'Dumbbell Front Raise', 21: 'Dumbbell Lateral Raise', 22: 'Dumbbell Row',
-    23: 'Dumbbell Triceps Extension (Left)', 24: 'Dumbbell Triceps Extension (Right)',
-    25: 'Elliptical', 26: 'Exercise Class', 27: 'Fencing',
-    28: 'Football (American)', 29: 'Football (Australian)', 30: 'Forward Twist',
-    31: 'Frisbee Disc', 32: 'Golf', 33: 'Guided Breathing', 34: 'Gymnastics',
-    35: 'Handball', 36: 'HIIT', 37: 'Hiking', 38: 'Ice Hockey', 39: 'Ice Skating',
-    40: 'Jump Rope', 41: 'Jumping Jack', 42: 'Lat Pull-Down', 43: 'Lunge',
-    44: 'Martial Arts', 45: 'Meditation', 46: 'Mixed Martial Arts',
-    47: 'Other', 48: 'Paddling', 49: 'Paragliding', 50: 'Pilates',
-    51: 'Plank', 52: 'Racquetball', 53: 'Rock Climbing', 54: 'Roller Hockey',
-    55: 'Rowing', 56: 'Rowing Machine', 57: 'Rugby', 58: 'Running',
-    59: 'Running (Treadmill)', 60: 'Sailing', 61: 'Scuba Diving', 62: 'Skating',
-    63: 'Skiing', 64: 'Snowboarding', 65: 'Snowshoeing', 66: 'Soccer',
-    67: 'Softball', 68: 'Squash', 69: 'Squat', 70: 'Stair Climbing',
-    71: 'Stair Climbing Machine', 72: 'Strength Training', 73: 'Stretching',
-    74: 'Surfing', 75: 'Swimming (Open Water)', 76: 'Swimming (Pool)',
-    77: 'Table Tennis', 78: 'Tennis', 79: 'Volleyball',
-    80: 'Walking', 81: 'Water Polo', 82: 'Weightlifting',
-    83: 'Wheelchair', 84: 'Yoga',
+    51: 'Strength Training', 52: 'Stretching', 53: 'Walking', 54: 'Surfing',
+    55: 'Swimming (Open Water)', 56: 'Swimming (Pool)', 57: 'Table Tennis',
+    58: 'Weight Training', 59: 'Volleyball', 60: 'Wakeboarding', 61: 'Water Polo',
+    62: 'Wheelchair', 63: 'Yoga'
 };
 
 const MEAL_TYPES = { 0: 'Unknown', 1: 'Breakfast', 2: 'Lunch', 3: 'Dinner', 4: 'Snack' };
@@ -103,18 +73,9 @@ async function main() {
     // Load SQLite
     let SQL = await sqlJsInit();
     let db = null;
+    let currentDbSource = null;
 
-    try {
-        if (fs.existsSync(DB_PATH)) {
-            const dbBuffer = fs.readFileSync(DB_PATH);
-            db = new SQL.Database(dbBuffer);
-            console.log(`[Init] Loaded database from ${DB_PATH}`);
-        } else {
-            console.log(`[Init] No database found at ${DB_PATH}. Waiting for upload...`);
-        }
-    } catch (e) {
-        console.error(`[Init] Failed to load initial db:`, e.message);
-    }
+    console.log(`[Init] Waiting for database upload via UI...`);
 
     const app = express();
     app.use(express.static(path.join(__dirname, 'public')));
@@ -135,6 +96,7 @@ async function main() {
 
             // Load new DB buffering in SQL.js
             db = new SQL.Database(req.file.buffer);
+            currentDbSource = req.file.originalname || 'Uploaded Database';
             console.log(`[API] Successfully loaded new database from upload`);
             res.json({ success: true, message: 'Database loaded successfully' });
         } catch (err) {
@@ -148,7 +110,7 @@ async function main() {
         try {
             if (!db) return res.status(400).json({ error: 'Database not loaded' });
 
-            const stats = {};
+            const stats = { dbSource: currentDbSource };
 
             // Date ranges
             const nut = db.exec('SELECT MIN(start_time), MAX(start_time), COUNT(*) FROM nutrition_record_table');
@@ -401,16 +363,41 @@ async function main() {
                 ORDER BY start_time ASC
             `);
 
-            const data = rows[0].values.map(r => ({
-                date: msToLocalDate(r[1], r[2]),
-                startTime: msToDate(r[1]),
-                endTime: msToDate(r[3]),
-                durationMin: msDurationToMinutes(r[1], r[3]),
-                exerciseType: EXERCISE_TYPE_MAP[r[4]] || `Type ${r[4]}`,
-                exerciseTypeId: r[4],
-                title: r[5] || '',
-                notes: r[6] || '',
-            }));
+            const segRows = db.exec(`
+                SELECT parent_key, segment_start_time, segment_end_time, segment_type, repetitions_count
+                FROM exercise_segments_table
+                ORDER BY parent_key, segment_start_time ASC
+            `);
+            const segmentsByParent = new Map();
+            if (segRows[0]) {
+                for (const r of segRows[0].values) {
+                    const list = segmentsByParent.get(r[0]) || [];
+                    list.push({
+                        startTimeMs: r[1],
+                        endTimeMs: r[2],
+                        segmentType: r[3],
+                        reps: r[4] || 0,
+                    });
+                    segmentsByParent.set(r[0], list);
+                }
+            }
+
+            const data = rows[0].values.map(r => {
+                const segments = segmentsByParent.get(r[0]) || [];
+                return {
+                    date: msToLocalDate(r[1], r[2]),
+                    startTime: msToDate(r[1]),
+                    endTime: msToDate(r[3]),
+                    durationMin: msDurationToMinutes(r[1], r[3]),
+                    exerciseType: EXERCISE_TYPES[r[4]] || `Type ${r[4]}`,
+                    exerciseTypeId: r[4],
+                    title: r[5] || '',
+                    notes: r[6] || '',
+                    totalSets: segments.filter(s => s.reps > 0).length,
+                    totalReps: segments.reduce((acc, s) => acc + s.reps, 0),
+                    segments: segments
+                };
+            });
 
             res.json(data);
         } catch (err) {
@@ -628,7 +615,7 @@ async function main() {
 
     app.listen(PORT, () => {
         console.log(`\n  Health Connect Explorer`);
-        console.log(`  Database: ${DB_PATH}`);
+        console.log(`  Database: Waiting for upload via UI`);
         console.log(`  Server:   http://localhost:${PORT}\n`);
     });
 }

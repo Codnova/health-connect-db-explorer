@@ -9,7 +9,7 @@ A local web dashboard for visualizing and exploring data exported from [Google H
 - **Nutrition** — Energy Balance Gantt chart (Calories In vs. TDEE Out) with adjustable Activity Factor, macronutrient breakdown (protein/carbs/fat), macro split donut, and a searchable meals table
 - **Steps** — daily bar chart color-coded by activity level (green 10k+, orange 5k+, red below)
 - **Sleep** — duration bars, chronological floating bar chart for sleep-stage architecture (deep, REM, light, awake), and average stats
-- **Exercise** — sessions-by-type donut, weekly exercise minutes, and session history table
+- **Exercise** — sessions-by-type donut, weekly exercise minutes, and session history table with synced Sets and Reps (from `exercise_segments_table`)
 - **Heart Rate** — daily min/avg/max band chart from Samsung Health series data
 - **Data Explorer** — raw table browser with pagination for all 71 tables in the database
 
@@ -35,23 +35,24 @@ cd hc-explorer
 # Install dependencies
 npm install
 
-# Run (database defaults to ../health_connect_export.db)
+# Run the server
 npm start
 ```
 
-Open [http://localhost:3500](http://localhost:3500) in your browser.
+Open [http://localhost:3500](http://localhost:3500) in your browser. The app will prompt you to upload your `.db` file directly through the UI.
 
 ## Configuration
 
-| Variable     | Default                            | Description                      |
-| ------------ | ---------------------------------- | -------------------------------- |
-| `HC_DB_PATH` | `../health_connect_export.db`      | Path to the Health Connect `.db` |
-| `PORT`       | `3500`                             | Server port                      |
+| Variable         | Default                            | Description                                                        |
+| ---------------- | ---------------------------------- | ------------------------------------------------------------------ |
+| `PORT`           | `3500`                             | Server port                                                        |
+| `HOST`           | `127.0.0.1`                        | Bind address. Defaults to localhost-only for privacy/safety.       |
+| `HC_ADMIN_TOKEN` | _(empty)_                          | Optional token for upload/data-explorer endpoints (`x-admin-token`) |
 
-Example with a custom path:
+Example with a custom port:
 
 ```bash
-HC_DB_PATH=/path/to/my-export.db PORT=4000 npm start
+PORT=4000 npm start
 ```
 
 ## Project Structure
@@ -72,6 +73,7 @@ All endpoints return JSON.
 
 | Endpoint              | Description                                      |
 | --------------------- | ------------------------------------------------ |
+| `POST /api/database`  | Upload and load a `.db` file (local/admin protected) |
 | `GET /api/overview`   | Summary stats for all data types                 |
 | `GET /api/weight`     | Weight records (date, kg)                        |
 | `GET /api/nutrition`  | Daily calorie/macro aggregates + individual meals|
@@ -133,7 +135,7 @@ Meals logged from MacroFactor or other nutrition apps.
 | -------------------- | ---- | ------------------------------------------------ |
 | `meal_type`          | INT  | 0=Unknown, 1=Breakfast, 2=Lunch, 3=Dinner, 4=Snack |
 | `meal_name`          | TEXT | e.g. "Chicken Breast", "Pisco Sour"              |
-| `energy`             | REAL | Joules (divide by 4184 for kcal)                 |
+| `energy`             | REAL | Calories (divide by 1000 for kcal)               |
 | `protein`            | REAL | Grams                                            |
 | `total_carbohydrate` | REAL | Grams                                            |
 | `total_fat`          | REAL | Grams                                            |
@@ -146,7 +148,7 @@ Meals logged from MacroFactor or other nutrition apps.
 | `dietary_fiber`      | REAL | Grams                                            |
 | `cholesterol`        | REAL | Grams                                            |
 | `sodium`             | REAL | Grams                                            |
-| `energy_from_fat`    | REAL | Joules                                           |
+| `energy_from_fat`    | REAL | Calories (divide by 1000 for kcal)               |
 | `caffeine`           | REAL | Grams                                            |
 | `calcium`            | REAL | Grams                                            |
 | `iron`               | REAL | Grams                                            |
@@ -271,7 +273,7 @@ Individual BPM readings linked via `parent_key` → `heart_rate_record_table.row
 
 | Column   | Type | Notes                              |
 | -------- | ---- | ---------------------------------- |
-| `energy` | REAL | Joules (divide by 4184 for kcal)   |
+| `energy` | REAL | Calories (divide by 1000 for kcal) |
 
 #### `distance_record_table`
 
@@ -350,24 +352,28 @@ Audit log of which apps read which data.
 
 ### Exercise Type IDs
 
-| ID | Type               | ID | Type                | ID | Type              |
-| -- | ------------------ | -- | ------------------- | -- | ----------------- |
-| 0  | Other              | 29 | Football (AU)       | 58 | Running           |
-| 2  | Badminton          | 32 | Golf                | 59 | Running (Treadmill) |
-| 4  | Baseball           | 34 | Gymnastics          | 61 | Scuba Diving      |
-| 5  | Basketball         | 35 | Handball            | 63 | Skiing            |
-| 8  | Biking             | 36 | HIIT                | 64 | Snowboarding      |
-| 9  | Biking (Stationary)| 37 | Hiking              | 66 | Soccer            |
-| 10 | Boot Camp          | 38 | Ice Hockey          | 68 | Squash            |
-| 11 | Boxing             | 39 | Ice Skating         | 69 | Squat             |
-| 13 | Calisthenics       | 44 | Martial Arts        | 70 | Stair Climbing    |
-| 14 | Cricket            | 45 | Meditation          | 72 | Strength Training |
-| 16 | Dancing            | 50 | Pilates             | 73 | Stretching        |
-| 17 | Deadlift           | 52 | Racquetball         | 74 | Surfing           |
-| 25 | Elliptical         | 53 | Rock Climbing       | 76 | Swimming (Pool)   |
-| 26 | Exercise Class     | 55 | Rowing              | 78 | Tennis            |
-| 27 | Fencing            | 56 | Rowing Machine      | 79 | Volleyball        |
-| 28 | Football (US)      | 57 | Rugby               | 80 | Walking           |
+Note: The SQLite database export uses an internal integer mapping system that differs from the public Android 14 Health Connect SDK constants.
+
+| ID | Type                    | ID | Type                 | ID | Type              |
+| -- | ----------------------- | -- | -------------------- | -- | ----------------- |
+| 0  | Unknown                 | 24 | HIIT                 | 44 | Skiing            |
+| 2  | Badminton               | 25 | Hiking               | 45 | Snowboarding      |
+| 4  | Baseball                | 26 | Ice Hockey           | 46 | Snowshoeing       |
+| 5  | Basketball              | 27 | Ice Skating          | 47 | Soccer            |
+| 8  | Biking                  | 29 | Martial Arts         | 48 | Softball          |
+| 10 | Boxing                  | 31 | Paddling             | 49 | Squash            |
+| 11 | Calisthenics            | 32 | Paragliding          | 50 | Stair Climbing    |
+| 13 | Cricket                 | 33 | Pilates              | 51 | Strength Training |
+| 14 | Dancing                 | 34 | Racquetball          | 52 | Stretching        |
+| 16 | Fencing                 | 35 | Rock Climbing        | 53 | Walking           |
+| 17 | Football (American)     | 36 | Roller Hockey        | 54 | Surfing           |
+| 18 | Football (Australian)   | 37 | Rowing               | 55 | Swimming (Open Water)|
+| 20 | Golf                    | 38 | Rugby                | 56 | Swimming (Pool)   |
+| 22 | Gymnastics              | 39 | Running              | 57 | Table Tennis      |
+| 23 | Handball                | 40 | Sailing              | 58 | Weight Training   |
+| 42 | Scuba Diving            | 43 | Skating              | 59 | Volleyball        |
+| 60 | Wakeboarding            | 61 | Water Polo           | 62 | Wheelchair        |
+| 63 | Yoga                    |    |                      |    |                   |
 
 ### Sleep Stage Type IDs
 
@@ -401,6 +407,8 @@ Audit log of which apps read which data.
 
 - The database is loaded into memory at startup via sql.js. This works well for typical Health Connect exports (tens of MB). For very large files, startup may take a few seconds.
 - All timestamps in the database are epoch milliseconds. The dashboard converts them to local dates using the zone offset stored alongside each record.
-- Energy values in the database are in Joules; the dashboard converts to kilocalories (kcal).
+- Sleep session/stage clock times are rendered in the browser timezone.
+- Energy values in the database are in Calories; the dashboard divides by 1000 to convert to kilocalories (kcal).
 - Weight values in the database are in grams; the dashboard converts to kilograms (kg).
 - The `5e-324` values found in some nutrition fields are Health Connect's sentinel for "not recorded" and are treated as zero.
+- Sensitive endpoints (`/api/database`, `/api/tables`, `/api/table/:name`) are restricted to loopback clients; if `HC_ADMIN_TOKEN` is set, they also require `x-admin-token`.
