@@ -143,6 +143,7 @@
                 case 'exercise': await loadExercise(); break;
                 case 'heart': await loadHeartRate(); break;
                 case 'blood-pressure': await loadBloodPressure(); break;
+                case 'body': await loadBodyComposition(); break;
                 case 'correlations': await loadCorrelations(); break;
                 case 'goals': await loadGoals(); break;
                 case 'explorer': await loadExplorer(); break;
@@ -162,7 +163,7 @@
         const fmtDate = (iso) => iso ? new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—';
         const fmtRange = (obj) => obj ? `${fmtDate(obj.min)} — ${fmtDate(obj.max)}` : '';
 
-        panel.innerHTML = `
+            panel.innerHTML = `
             <div class="stats-grid">
                 <div class="stat-card">
                     <div class="label">Nutrition Records</div>
@@ -198,6 +199,16 @@
                     <div class="label">SpO2 Records</div>
                     <div class="value">${d.oxygenSaturation?.count?.toLocaleString() || 0}</div>
                     <div class="sub">${fmtRange(d.oxygenSaturation)}</div>
+                </div>
+                <div class="stat-card">
+                    <div class="label">VO2 Max Records</div>
+                    <div class="value">${d.vo2Max?.count?.toLocaleString() || 0}</div>
+                    <div class="sub">${fmtRange(d.vo2Max)}</div>
+                </div>
+                <div class="stat-card">
+                    <div class="label">Body Fat / Height</div>
+                    <div class="value">${(d.bodyFat?.count || 0) + (d.height?.count || 0)}</div>
+                    <div class="sub">${d.bodyFat?.count || 0} body fat, ${d.height?.count || 0} height</div>
                 </div>
                 <div class="stat-card">
                     <div class="label">Data Sources</div>
@@ -1029,12 +1040,34 @@
                 </div>
             </div>
             <div class="chart-box">
-                <h3>Recent Sessions</h3>
-                <div class="table-wrap" style="max-height:400px;overflow-y:auto">
+                <h3>Recent Sessions <span style="font-size:12px;color:var(--text2);font-weight:normal">(click a row to see HR & speed detail)</span></h3>
+                <div class="table-wrap" style="max-height:600px;overflow-y:auto">
                     <table>
-                        <thead><tr><th>Date</th><th>Type</th><th>Title</th><th>Duration</th><th>Sets/Reps</th></tr></thead>
+                        <thead><tr><th></th><th>Date</th><th>Type</th><th>Title</th><th>Duration</th><th>Avg HR</th><th>Max HR</th><th>Avg Speed</th><th>Dist</th><th>Cal</th><th>Sets/Reps</th></tr></thead>
                         <tbody id="exercise-table"></tbody>
                     </table>
+                </div>
+            </div>
+            <div id="exercise-detail-panel" style="display:none;margin-top:16px">
+                <div class="chart-box" style="margin-bottom:16px">
+                    <h3 id="detail-title">Session Detail</h3>
+                    <div id="detail-stats" class="stats-grid" style="margin-bottom:16px"></div>
+                    <div class="chart-row two-col">
+                        <div style="position:relative">
+                            <h4 style="font-size:13px;color:var(--text2);margin-bottom:8px">Heart Rate Timeline</h4>
+                            <div class="chart-wrap"><canvas id="chart-exercise-hr"></canvas></div>
+                        </div>
+                        <div style="position:relative">
+                            <h4 style="font-size:13px;color:var(--text2);margin-bottom:8px">HR Zones</h4>
+                            <div class="chart-wrap"><canvas id="chart-exercise-zones"></canvas></div>
+                        </div>
+                    </div>
+                    <div class="chart-row" style="margin-top:16px">
+                        <div style="position:relative">
+                            <h4 style="font-size:13px;color:var(--text2);margin-bottom:8px">Speed Profile</h4>
+                            <div class="chart-wrap"><canvas id="chart-exercise-speed"></canvas></div>
+                        </div>
+                    </div>
                 </div>
             </div>
         `;
@@ -1171,15 +1204,190 @@
         // Table
         const tbody = document.getElementById('exercise-table');
         const recent = data.slice(-50).reverse();
-        tbody.innerHTML = recent.map(d => `
-            <tr>
+        tbody.innerHTML = recent.map(d => {
+            const hrBadge = d.avgBpm ? `<span style="color:var(--red)">${d.avgBpm}</span>` : '<span style="color:var(--text2)">—</span>';
+            const maxHrBadge = d.maxBpm ? `<span style="color:var(--red)">${d.maxBpm}</span>` : '<span style="color:var(--text2)">—</span>';
+            const speedBadge = d.avgSpeedKmh ? `${d.avgSpeedKmh} km/h` : '<span style="color:var(--text2)">—</span>';
+            const hasDetail = d.hrPoints > 0 || d.avgSpeedKmh;
+            return `
+            <tr class="exercise-row" data-session-id="${d.sessionId}" style="cursor:${hasDetail ? 'pointer' : 'default'}">
+                <td>${hasDetail ? '<span style="color:var(--accent);font-size:11px">▶</span>' : ''}</td>
                 <td>${d.date}</td>
                 <td><span class="pill green">${escHtml(d.exerciseType)}</span></td>
                 <td>${escHtml(d.title)}</td>
                 <td>${d.durationMin} min</td>
-                <td>${d.totalSets > 0 ? `<span class="pill blue">${d.totalSets} sets, ${d.totalReps} reps</span>` : '<span style="color:var(--text2)">—</span>'}</td>
-            </tr>
-        `).join('');
+                <td>${hrBadge}</td>
+                <td>${maxHrBadge}</td>
+                <td>${speedBadge}</td>
+                <td>${d.distanceM > 0 ? `${(d.distanceM / 1000).toFixed(2)} km` : '<span style="color:var(--text2)">—</span>'}</td>
+                <td>${d.caloriesBurned > 0 ? `${d.caloriesBurned}` : '<span style="color:var(--text2)">—</span>'}</td>
+                <td>${d.totalSets > 0 ? `<span class="pill blue">${d.totalSets}s/${d.totalReps}r</span>` : '<span style="color:var(--text2)">—</span>'}</td>
+            </tr>`;
+        }).join('');
+
+        // Click handler for exercise detail
+        tbody.addEventListener('click', async (e) => {
+            const row = e.target.closest('.exercise-row');
+            if (!row) return;
+            const sessionId = row.dataset.sessionId;
+            if (!sessionId) return;
+            await loadExerciseDetail(sessionId, row);
+        });
+    }
+
+    async function loadExerciseDetail(sessionId, clickedRow) {
+        const detailPanel = document.getElementById('exercise-detail-panel');
+        detailPanel.style.display = 'block';
+        detailPanel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+
+        // Highlight clicked row
+        document.querySelectorAll('.exercise-row').forEach(r => r.style.background = '');
+        if (clickedRow) clickedRow.style.background = 'var(--surface2)';
+
+        try {
+            const detail = await api(`/api/exercise-detail/${sessionId}`);
+            const durationMin = Math.round(detail.durationMs / 60000);
+
+            document.getElementById('detail-title').textContent = `Session Detail — ${durationMin} min`;
+
+            // Zone stats
+            const totalZonePts = Object.values(detail.hrZones).reduce((a, b) => a + b, 0);
+            const zonePct = (z) => totalZonePts > 0 ? Math.round(z / totalZonePts * 100) : 0;
+            document.getElementById('detail-stats').innerHTML = `
+                <div class="stat-card">
+                    <div class="label">HR Data Points</div>
+                    <div class="value">${detail.totalHrPoints}</div>
+                </div>
+                <div class="stat-card">
+                    <div class="label">Peak Zone (160+)</div>
+                    <div class="value" style="color:var(--red)">${zonePct(detail.hrZones.peak)}%</div>
+                    <div class="sub">${detail.hrZones.peak} readings</div>
+                </div>
+                <div class="stat-card">
+                    <div class="label">Cardio Zone (140-160)</div>
+                    <div class="value" style="color:var(--orange)">${zonePct(detail.hrZones.cardio)}%</div>
+                    <div class="sub">${detail.hrZones.cardio} readings</div>
+                </div>
+                <div class="stat-card">
+                    <div class="label">Speed Data Points</div>
+                    <div class="value">${detail.totalSpeedPoints}</div>
+                </div>
+            `;
+
+            // HR Timeline chart
+            destroyChart('exerciseHr');
+            if (detail.hrTimeline.length > 0) {
+                const fmtTime = (ms) => {
+                    const m = Math.floor(ms / 60000);
+                    const s = Math.floor((ms % 60000) / 1000);
+                    return `${m}:${s.toString().padStart(2, '0')}`;
+                };
+                charts['exerciseHr'] = new Chart(document.getElementById('chart-exercise-hr'), {
+                    type: 'line',
+                    data: {
+                        labels: detail.hrTimeline.map(p => p.t),
+                        datasets: [{
+                            label: 'BPM',
+                            data: detail.hrTimeline.map(p => p.bpm),
+                            borderColor: COLORS.red,
+                            backgroundColor: COLORS.red + '20',
+                            fill: true,
+                            tension: 0.3,
+                            pointRadius: 0,
+                            borderWidth: 2,
+                        }]
+                    },
+                    options: {
+                        responsive: true, maintainAspectRatio: false,
+                        scales: {
+                            x: {
+                                type: 'linear',
+                                title: { display: true, text: 'Time (min)' },
+                                ticks: { callback: v => fmtTime(v) }
+                            },
+                            y: { title: { display: true, text: 'BPM' } }
+                        },
+                        plugins: {
+                            tooltip: { callbacks: { label: ctx => `${ctx.parsed.y} bpm at ${fmtTime(ctx.parsed.x)}` } }
+                        }
+                    }
+                });
+            }
+
+            // HR Zones donut
+            destroyChart('exerciseZones');
+            if (totalZonePts > 0) {
+                charts['exerciseZones'] = new Chart(document.getElementById('chart-exercise-zones'), {
+                    type: 'doughnut',
+                    data: {
+                        labels: ['Rest (<100)', 'Warm-up (100-120)', 'Fat Burn (120-140)', 'Cardio (140-160)', 'Peak (160+)'],
+                        datasets: [{
+                            data: [detail.hrZones.rest, detail.hrZones.warmup, detail.hrZones.fatBurn, detail.hrZones.cardio, detail.hrZones.peak],
+                            backgroundColor: ['#9096a8', COLORS.green, COLORS.yellow, COLORS.orange, COLORS.red],
+                            borderColor: '#1a1d27',
+                            borderWidth: 3,
+                        }]
+                    },
+                    options: {
+                        responsive: true, maintainAspectRatio: false,
+                        plugins: {
+                            legend: { position: 'right', labels: { font: { size: 11 } } },
+                            tooltip: {
+                                callbacks: {
+                                    label: ctx => {
+                                        const total = ctx.dataset.data.reduce((a, b) => a + b, 0);
+                                        const pct = Math.round(ctx.parsed / total * 100);
+                                        return `${ctx.label}: ${pct}% (${ctx.parsed} pts)`;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                });
+            }
+
+            // Speed chart
+            destroyChart('exerciseSpeed');
+            if (detail.speedTimeline.length > 0) {
+                const fmtTime = (ms) => {
+                    const m = Math.floor(ms / 60000);
+                    const s = Math.floor((ms % 60000) / 1000);
+                    return `${m}:${s.toString().padStart(2, '0')}`;
+                };
+                charts['exerciseSpeed'] = new Chart(document.getElementById('chart-exercise-speed'), {
+                    type: 'line',
+                    data: {
+                        labels: detail.speedTimeline.map(p => p.t),
+                        datasets: [{
+                            label: 'Speed (km/h)',
+                            data: detail.speedTimeline.map(p => p.speedKmh),
+                            borderColor: COLORS.accent2,
+                            backgroundColor: COLORS.accent2 + '20',
+                            fill: true,
+                            tension: 0.3,
+                            pointRadius: 3,
+                            borderWidth: 2,
+                        }]
+                    },
+                    options: {
+                        responsive: true, maintainAspectRatio: false,
+                        scales: {
+                            x: {
+                                type: 'linear',
+                                title: { display: true, text: 'Time (min)' },
+                                ticks: { callback: v => fmtTime(v) }
+                            },
+                            y: { title: { display: true, text: 'km/h' }, beginAtZero: true }
+                        },
+                        plugins: {
+                            tooltip: { callbacks: { label: ctx => `${ctx.parsed.y} km/h at ${fmtTime(ctx.parsed.x)}` } }
+                        }
+                    }
+                });
+            }
+        } catch (err) {
+            detailPanel.innerHTML = `<div class="stat-card"><div class="label">Error</div><div class="sub">${err.message}</div></div>`;
+        }
     }
 
     // ─── Heart Rate ───
@@ -1358,6 +1566,157 @@
         });
     }
 
+    // ─── Body Composition ───
+    async function loadBodyComposition() {
+        const panel = document.getElementById('panel-body');
+        const [spo2Res, bfRes, htRes, vo2Res] = await Promise.all([
+            api('/api/spo2').catch(() => []),
+            api('/api/body-fat').catch(() => []),
+            api('/api/height').catch(() => []),
+            api('/api/vo2max').catch(() => []),
+        ]);
+
+        const latestHt = htRes.length ? htRes[htRes.length - 1] : null;
+        const latestBf = bfRes.length ? bfRes[bfRes.length - 1] : null;
+        const latestVo2 = vo2Res.length ? vo2Res[vo2Res.length - 1] : null;
+        const avgSpo2 = spo2Res.length ? (spo2Res.reduce((s, d) => s + d.percentage, 0) / spo2Res.length).toFixed(1) : '—';
+
+        panel.innerHTML = `
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <div class="label">Height</div>
+                    <div class="value">${latestHt ? latestHt.heightM + ' m' : '—'}</div>
+                    <div class="sub">${latestHt ? latestHt.date : 'No data'}</div>
+                </div>
+                <div class="stat-card">
+                    <div class="label">Body Fat</div>
+                    <div class="value" style="color:var(--orange)">${latestBf ? latestBf.percentage + '%' : '—'}</div>
+                    <div class="sub">${latestBf ? latestBf.date : 'No data'} (${bfRes.length} records)</div>
+                </div>
+                <div class="stat-card">
+                    <div class="label">Latest VO2 Max</div>
+                    <div class="value" style="color:var(--green)">${latestVo2 ? latestVo2.vo2Max : '—'}</div>
+                    <div class="sub">${latestVo2 ? latestVo2.date + ' · mL/min/kg' : 'No data'}</div>
+                </div>
+                <div class="stat-card">
+                    <div class="label">Avg SpO2</div>
+                    <div class="value" style="color:var(--accent)">${avgSpo2}%</div>
+                    <div class="sub">${spo2Res.length} readings</div>
+                </div>
+            </div>
+            <div class="chart-row two-col">
+                <div class="chart-box">
+                    <h3>VO2 Max Over Time</h3>
+                    <div class="chart-wrap"><canvas id="chart-vo2max"></canvas></div>
+                </div>
+                <div class="chart-box">
+                    <h3>Body Fat Over Time</h3>
+                    <div class="chart-wrap"><canvas id="chart-bodyfat"></canvas></div>
+                </div>
+            </div>
+            <div class="chart-row two-col">
+                <div class="chart-box">
+                    <h3>SpO2 Over Time</h3>
+                    <div class="chart-wrap"><canvas id="chart-spo2"></canvas></div>
+                </div>
+                <div class="chart-box">
+                    <h3>Height Records</h3>
+                    <div class="table-wrap" style="max-height:300px;overflow-y:auto">
+                        <table>
+                            <thead><tr><th>Date</th><th>Height (m)</th></tr></thead>
+                            <tbody id="height-table"></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        `;
+
+        // VO2 Max chart
+        if (vo2Res.length) {
+            charts['vo2max'] = new Chart(document.getElementById('chart-vo2max'), {
+                type: 'line',
+                data: {
+                    labels: vo2Res.map(d => d.date),
+                    datasets: [{
+                        label: 'VO2 Max (mL/min/kg)',
+                        data: vo2Res.map(d => d.vo2Max),
+                        borderColor: COLORS.green,
+                        backgroundColor: COLORS.green + '20',
+                        fill: true,
+                        tension: 0.3,
+                        pointRadius: 4,
+                        pointHoverRadius: 6,
+                    }]
+                },
+                options: {
+                    responsive: true, maintainAspectRatio: false,
+                    scales: {
+                        x: { type: 'time', time: { unit: 'month' } },
+                        y: { title: { display: true, text: 'mL/min/kg' } }
+                    }
+                }
+            });
+        }
+
+        // Body Fat chart
+        if (bfRes.length) {
+            charts['bodyfat'] = new Chart(document.getElementById('chart-bodyfat'), {
+                type: 'line',
+                data: {
+                    labels: bfRes.map(d => d.date),
+                    datasets: [{
+                        label: 'Body Fat (%)',
+                        data: bfRes.map(d => d.percentage),
+                        borderColor: COLORS.orange,
+                        backgroundColor: COLORS.orange + '20',
+                        fill: true,
+                        tension: 0.3,
+                        pointRadius: 4,
+                    }]
+                },
+                options: {
+                    responsive: true, maintainAspectRatio: false,
+                    scales: {
+                        x: { type: 'time', time: { unit: 'month' } },
+                        y: { title: { display: true, text: '%' } }
+                    }
+                }
+            });
+        }
+
+        // SpO2 chart
+        if (spo2Res.length) {
+            charts['spo2'] = new Chart(document.getElementById('chart-spo2'), {
+                type: 'scatter',
+                data: {
+                    datasets: [{
+                        label: 'SpO2 (%)',
+                        data: spo2Res.map(d => ({ x: d.date, y: d.percentage })),
+                        backgroundColor: COLORS.accent,
+                        pointRadius: 3,
+                    }]
+                },
+                options: {
+                    responsive: true, maintainAspectRatio: false,
+                    scales: {
+                        x: { type: 'time', time: { unit: 'month' } },
+                        y: { title: { display: true, text: '%' }, min: 90, max: 100 }
+                    }
+                }
+            });
+        }
+
+        // Height table
+        const htBody = document.getElementById('height-table');
+        if (htRes.length) {
+            htBody.innerHTML = htRes.slice().reverse().map(d => `
+                <tr><td>${d.date}</td><td>${d.heightM} m</td></tr>
+            `).join('');
+        } else {
+            htBody.innerHTML = '<tr><td colspan="2" style="color:var(--text2)">No height data</td></tr>';
+        }
+    }
+
     // ─── Correlations ───
     const METRIC_DEFS = {
         weight: { url: '/api/weight', label: 'Weight (kg)', extract: d => d.weightKg },
@@ -1367,6 +1726,9 @@
         balance: { custom: 'balance', label: 'Caloric Balance (kcal)' },
         sleep: { url: '/api/sleep', label: 'Sleep Duration (hrs)', extract: d => d.durationHrs },
         restHr: { url: '/api/heart-rate', label: 'Resting HR (bpm)', extract: d => d.minBpm },
+        vo2Max: { url: '/api/vo2max', label: 'VO2 Max (mL/min/kg)', extract: d => d.vo2Max },
+        distance: { url: '/api/distance', label: 'Distance (km)', extract: d => d.distanceKm },
+        spo2: { url: '/api/spo2', label: 'SpO2 (%)', extract: d => d.percentage },
     };
 
     function pearson(d1, d2) {
